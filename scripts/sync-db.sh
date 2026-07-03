@@ -43,6 +43,11 @@ if [ "${VERCEL:-}" = "1" ] || [ "${CI:-}" = "true" ]; then
     SIZE=$(wc -c < "$DB_PATH")
     echo "[sync-db] ✅ Downloaded aldi.db ($SIZE bytes) to $DB_PATH"
 
+    # Remove -wal and -shm files if they were downloaded alongside
+    # (these are write-ahead-log files that shouldn't be committed and
+    # can cause "unable to open database file" errors on read-only filesystems)
+    rm -f "${DB_PATH}-wal" "${DB_PATH}-shm" 2>/dev/null || true
+
     # Quick stats
     if command -v sqlite3 &>/dev/null; then
       PUBS=$(sqlite3 "$DB_PATH" "SELECT COUNT(*) FROM publications" 2>/dev/null || echo "?")

@@ -36,10 +36,13 @@ export function getDb(): any {
       _db = new Database(dbPath, { readonly: true });
     } else {
       // Node.js (Vercel production) — use better-sqlite3
+      // On Vercel serverless, the filesystem is read-only. Open with the
+      // immutable URI parameter so SQLite doesn't try to create -wal/-shm
+      // files (which would fail on the read-only Vercel filesystem).
       // eslint-disable-next-line @typescript-eslint/no-require-imports
       const Database = require("better-sqlite3");
-      _db = new Database(dbPath, { readonly: true, fileMustExist: true });
-      _db.pragma("journal_mode = WAL");
+      const uri = `file:${dbPath}?immutable=1`;
+      _db = new Database(uri, { readonly: true, fileMustExist: true });
     }
   }
   return _db;
