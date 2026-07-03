@@ -1,12 +1,7 @@
-import { db } from "@/lib/db";
-import type {
-  Publication,
-  Product,
-  ProductOffering,
-} from "@prisma/client";
+import { getDb } from "@/lib/db-sqlite";
 
 // ===========================================================================
-// Types (returned to API / UI)
+// Types (returned to API / UI) — kept identical to the Prisma version
 // ===========================================================================
 
 export interface Stats {
@@ -149,73 +144,69 @@ export interface CategoryEntry {
   count: number;
 }
 
+export interface BrandEntry {
+  name: string;
+  count: number;
+  avgPrice: number | null;
+  minPrice: number | null;
+  maxPrice: number | null;
+}
+
 // ===========================================================================
-// Query layer
+// Query layer — uses better-sqlite3 (works on Vercel serverless)
 // ===========================================================================
 
 export async function getStats(): Promise<Stats> {
-  const [publications, products, offerings, categoryAgg, priceAgg] =
-    await Promise.all([
-      db.publication.count(),
-      db.product.count(),
-      db.productOffering.count(),
-      db.productOffering.groupBy({
-        by: ["productType"],
-        where: { productType: { not: null, not: "" } },
-        _count: { _all: true },
-      }),
-      db.productOffering.aggregate({
-        _min: { priceNumeric: true },
-        _max: { priceNumeric: true },
-        _avg: { priceNumeric: true },
-        where: { priceNumeric: { not: null } },
-      }),
-    ]);
+  const db = getDb();
 
-  const publicationList = await db.publication.findMany({
-    orderBy: { validDateStart: "desc" },
-    select: {
-      id: true,
-      slug: true,
-      originalTitle: true,
-      validDates: true,
-      validDateStart: true,
-      validDateEnd: true,
-      fetchedAt: true,
-      _count: { select: { offerings: true } },
-    },
-  });
+  const publications = db.prepare("SELECT COUNT(*) as n FROM publications").get() as any;
+  const products = db.prepare("SELECT COUNT(*) as n FROM products").get() as any;
+  const offerings = db.prepare("SELECT COUNT(*) as n FROM product_offerings").get() as any;
+
+  const categoryAgg = db.prepare(
+    "SELECT COUNT(DISTINCT product_type) as n FROM product_offerings WHERE product_type IS NOT NULL AND product_type != ''"
+  ).get() as any;
+
+  const priceAgg = db.prepare(
+    "SELECT MIN(price_numeric) as lo, MAX(price_numeric) as hi, AVG(price_numeric) as avg FROM product_offerings WHERE price_numeric IS NOT NULL"
+  ).get() as any;
+
+  const pubs = db.prepare(
+    `SELECT id, slug, original_title, valid_dates, valid_date_start, valid_date_end, fetched_at,
+            (SELECT COUNT(*) FROM product_offerings WHERE publication_id = p.id) as off_count
+     FROM publications p
+     ORDER BY valid_date_start DESC`
+  ).all() as any[];
 
   return {
-    publications,
-    products,
-    offerings,
-    categories: categoryAgg.length,
-    priceMin: priceAgg._min.priceNumeric,
-    priceMax: priceAgg._max.priceNumeric,
-    priceAvg: priceAgg._avg.priceNumeric,
-    publicationList: publicationList.map((p) => ({
+    publications: publications.n,
+    products: products.n,
+    offerings: offerings.n,
+    categories: categoryAgg.n,
+    priceMin: priceAgg.lo,
+    priceMax: priceAgg.hi,
+    priceAvg: priceAgg.avg,
+    publicationList: pubs.map((p) => ({
       id: p.id,
       slug: p.slug,
-      originalTitle: p.originalTitle,
-      validDates: p.validDates,
-      validDateStart: p.validDateStart,
-      validDateEnd: p.validDateEnd,
-      fetchedAt: p.fetchedAt,
-      offeringCount: p._count.offerings,
+      originalTitle: p.original_title,
+      validDates: p.valid_dates,
+      validDateStart: p.valid_date_start,
+      validDateEnd: p.valid_date_end,
+      fetchedAt: p.fetched_at,
+      offeringCount: p.off_count,
     })),
   };
 }
 
 export async function listPublications() {
-  const pubs = await db.publication.findMany({
-    orderBy: { fetchedAt: "desc" },
-    include: { _count: { select: { offerings: true } } },
-  });
-  return pubs.map((p) => ({
-    ...p,
-    offeringCount: p._count.offerings,
-  }));
+  const db = getDb();
+  const pubs = db.prepare(
+    `SELECT *, (SELECT COUNT(*) FROM product_offerings WHERE publication_id = p.id) as off_count
+     FROM publications p
+     ORDER BY fetched_at DESC`
+  ).all() as any[];
+  return pubs.map((p) => ({ ...p, offeringCount: p.off_count }));
 }
 
 export interface ListProductsParams {
@@ -234,105 +225,97 @@ export interface ListProductsParams {
 export async function listProducts(
   params: ListProductsParams = {}
 ): Promise<ProductListResult> {
+  const db = getDb();
   const page = params.page ?? 1;
   const pageSize = params.pageSize ?? 50;
-  const skip = (page - 1) * pageSize;
+  const offset = (page - 1) * pageSize;
 
-  const where: Record<string, unknown> = {};
+  const where: string[] = [];
+  const vals: any[] = [];
+
   if (params.publicationId) {
-    where.publicationId = params.publicationId;
+    where.push("o.publication_id = ?");
+    vals.push(params.publicationId);
   }
   if (params.search) {
-    const s = params.search.toLowerCase();
-    where.OR = [
-      { title: { contains: s } },
-      { description: { contains: s } },
-      { brand: { contains: s } },
-    ];
+    where.push("(LOWER(o.title) LIKE ? OR LOWER(o.description) LIKE ? OR LOWER(o.brand) LIKE ?)");
+    const s = `%${params.search.toLowerCase()}%`;
+    vals.push(s, s, s);
   }
   if (params.category) {
-    where.productType = { contains: params.category };
+    where.push("o.product_type LIKE ?");
+    vals.push(`%${params.category}%`);
   }
   if (params.brand) {
-    where.brand = { contains: params.brand };
+    where.push("o.brand LIKE ?");
+    vals.push(`%${params.brand}%`);
   }
   if (params.onSaleOnly) {
-    where.discountedPriceNumeric = { not: null };
+    where.push("o.discounted_price_numeric IS NOT NULL");
   }
-  if (params.minPrice !== undefined || params.maxPrice !== undefined) {
-    where.priceNumeric = {};
-    if (params.minPrice !== undefined) where.priceNumeric.gte = params.minPrice;
-    if (params.maxPrice !== undefined) where.priceNumeric.lte = params.maxPrice;
+  if (params.minPrice !== undefined) {
+    where.push("o.price_numeric >= ?");
+    vals.push(params.minPrice);
+  }
+  if (params.maxPrice !== undefined) {
+    where.push("o.price_numeric <= ?");
+    vals.push(params.maxPrice);
   }
 
-  // For price sorts, push NULL prices to the end using a computed sort.
-  // SQLite doesn't support NULLS LAST directly, so we sort by
-  // (priceNumeric IS NULL) first, then by priceNumeric.
-  let orderBy: Record<string, string> | Array<Record<string, string>> = {
-    title: "asc",
-  };
+  let orderBy = "o.title ASC";
   switch (params.sort) {
     case "price-asc":
-      orderBy = [
-        { priceNumeric: "asc" }, // NULLs sort first in SQLite; filter below
-      ];
+      where.push("o.price_numeric IS NOT NULL");
+      orderBy = "o.price_numeric ASC";
       break;
     case "price-desc":
-      orderBy = [{ priceNumeric: "desc" }];
+      where.push("o.price_numeric IS NOT NULL");
+      orderBy = "o.price_numeric DESC";
       break;
     case "title-desc":
-      orderBy = { title: "desc" };
+      orderBy = "o.title DESC";
       break;
     case "newest":
-      orderBy = { id: "desc" };
+      orderBy = "o.id DESC";
       break;
-    default:
-      orderBy = { title: "asc" };
   }
 
-  // For price-asc, exclude NULL prices so they don't pollute the head.
-  // (The UI can show a separate "no price" filter if needed.)
-  const finalWhere = { ...where };
-  if (params.sort === "price-asc" || params.sort === "price-desc") {
-    finalWhere.priceNumeric = { ...(finalWhere.priceNumeric || {}), not: null };
-  }
+  const whereClause = where.length > 0 ? "WHERE " + where.join(" AND ") : "";
 
-  const [rows, total] = await Promise.all([
-    db.productOffering.findMany({
-      where: finalWhere,
-      orderBy,
-      skip,
-      take: pageSize,
-      include: {
-        product: { select: { productKey: true } },
-        publication: {
-          select: { slug: true, originalTitle: true },
-        },
-      },
-    }),
-    db.productOffering.count({ where: finalWhere }),
-  ]);
+  const rows = db.prepare(
+    `SELECT o.*, p.product_key, pub.slug as pub_slug, pub.original_title as pub_title
+     FROM product_offerings o
+     JOIN products p ON p.id = o.product_id
+     JOIN publications pub ON pub.id = o.publication_id
+     ${whereClause}
+     ORDER BY ${orderBy}
+     LIMIT ? OFFSET ?`
+  ).all(...vals, pageSize, offset) as any[];
+
+  const totalRow = db.prepare(
+    `SELECT COUNT(*) as n FROM product_offerings o ${whereClause}`
+  ).get(...vals) as any;
 
   return {
     items: rows.map((r) => ({
       id: r.id,
-      productKey: r.product.productKey,
-      productIdRemote: r.productIdRemote,
+      productKey: r.product_key,
+      productIdRemote: r.product_id_remote,
       title: r.title,
       brand: r.brand,
       price: r.price,
-      priceNumeric: r.priceNumeric,
-      discountedPriceNumeric: r.discountedPriceNumeric,
-      currency: r.currency,
-      productType: r.productType,
+      priceNumeric: r.price_numeric,
+      discountedPriceNumeric: r.discounted_price_numeric,
+      currency: r.currency || "EUR",
+      productType: r.product_type,
       description: r.description,
-      pageRange: r.pageRange,
-      publicationId: r.publicationId,
-      publicationSlug: r.publication.slug,
-      publicationOriginalTitle: r.publication.originalTitle,
-      webshopIdentifier: r.webshopIdentifier,
+      pageRange: r.page_range,
+      publicationId: r.publication_id,
+      publicationSlug: r.pub_slug,
+      publicationOriginalTitle: r.pub_title,
+      webshopIdentifier: r.webshop_identifier,
     })),
-    total,
+    total: totalRow.n,
     page,
     pageSize,
   };
@@ -341,80 +324,87 @@ export async function listProducts(
 export async function getProductDetail(
   productKey: string
 ): Promise<ProductDetail | null> {
-  const product = await db.product.findUnique({
-    where: { productKey },
-  });
+  const db = getDb();
+
+  const product = db.prepare(
+    "SELECT * FROM products WHERE product_key = ?"
+  ).get(productKey) as any;
   if (!product) return null;
 
-  const [offerings, titleHistory, descriptionHistory, brandHistory] = await Promise.all([
-    db.productOffering.findMany({
-      where: { productId: product.id },
-      include: {
-        publication: {
-          select: { slug: true, originalTitle: true, fetchedAt: true },
-        },
-        photos: { select: { url: true, kind: true } },
-        labels: { select: { key: true, value: true } },
-      },
-      orderBy: { publication: { fetchedAt: "asc" } },
-    }),
-    db.productTitle.findMany({
-      where: { productId: product.id },
-      orderBy: { firstSeenAt: "asc" },
-    }),
-    db.productDescription.findMany({
-      where: { productId: product.id },
-      orderBy: { firstSeenAt: "asc" },
-    }),
-    db.productBrand.findMany({
-      where: { productId: product.id },
-      orderBy: { firstSeenAt: "asc" },
-    }),
-  ]);
+  const offerings = db.prepare(
+    `SELECT o.*, pub.slug as pub_slug, pub.original_title as pub_title, pub.fetched_at as pub_fetched
+     FROM product_offerings o
+     JOIN publications pub ON pub.id = o.publication_id
+     WHERE o.product_id = ?
+     ORDER BY pub.fetched_at ASC`
+  ).all(product.id) as any[];
 
-  return {
-    product: {
-      id: product.id,
-      productKey: product.productKey,
-      canonicalTitle: product.canonicalTitle,
-      canonicalType: product.canonicalType,
-      firstSeenAt: product.firstSeenAt,
-      lastSeenAt: product.lastSeenAt,
-    },
-    offerings: offerings.map((o) => ({
+  const titleHistory = db.prepare(
+    "SELECT title, first_seen_at, last_seen_at FROM product_titles WHERE product_id = ? ORDER BY first_seen_at ASC"
+  ).all(product.id) as any[];
+
+  const descriptionHistory = db.prepare(
+    "SELECT description, first_seen_at, last_seen_at FROM product_descriptions WHERE product_id = ? ORDER BY first_seen_at ASC"
+  ).all(product.id) as any[];
+
+  const brandHistory = db.prepare(
+    "SELECT brand, first_seen_at, last_seen_at FROM product_brands WHERE product_id = ? ORDER BY first_seen_at ASC"
+  ).all(product.id) as any[];
+
+  // Get photos + labels for each offering
+  const offeringDetails = offerings.map((o) => {
+    const photos = db.prepare(
+      "SELECT url, kind FROM product_photos WHERE offering_id = ?"
+    ).all(o.id) as any[];
+    const labels = db.prepare(
+      "SELECT key, value FROM product_labels WHERE offering_id = ?"
+    ).all(o.id) as any[];
+    return {
       id: o.id,
-      publicationId: o.publicationId,
-      publicationSlug: o.publication.slug,
-      publicationOriginalTitle: o.publication.originalTitle,
-      fetchedAt: o.publication.fetchedAt,
+      publicationId: o.publication_id,
+      publicationSlug: o.pub_slug,
+      publicationOriginalTitle: o.pub_title,
+      fetchedAt: o.pub_fetched,
       title: o.title,
       description: o.description,
       brand: o.brand,
       price: o.price,
-      priceNumeric: o.priceNumeric,
-      discountedPrice: o.discountedPrice,
-      discountedPriceNumeric: o.discountedPriceNumeric,
-      currency: o.currency,
-      productType: o.productType,
-      pageRange: o.pageRange,
-      webshopIdentifier: o.webshopIdentifier,
-      photos: o.photos.map((p) => ({ url: p.url, kind: p.kind })),
-      labels: o.labels.map((l) => ({ key: l.key, value: l.value })),
-    })),
+      priceNumeric: o.price_numeric,
+      discountedPrice: o.discounted_price,
+      discountedPriceNumeric: o.discounted_price_numeric,
+      currency: o.currency || "EUR",
+      productType: o.product_type,
+      pageRange: o.page_range,
+      webshopIdentifier: o.webshop_identifier,
+      photos: photos.map((p) => ({ url: p.url, kind: p.kind })),
+      labels: labels.map((l) => ({ key: l.key, value: l.value })),
+    };
+  });
+
+  return {
+    product: {
+      id: product.id,
+      productKey: product.product_key,
+      canonicalTitle: product.canonical_title,
+      canonicalType: product.canonical_type,
+      firstSeenAt: product.first_seen_at,
+      lastSeenAt: product.last_seen_at,
+    },
+    offerings: offeringDetails,
     titleHistory: titleHistory.map((t) => ({
       title: t.title,
-      firstSeenAt: t.firstSeenAt,
-      lastSeenAt: t.lastSeenAt,
+      firstSeenAt: t.first_seen_at,
+      lastSeenAt: t.last_seen_at,
     })),
     descriptionHistory: descriptionHistory.map((d) => ({
       description: d.description,
-      firstSeenAt: d.firstSeenAt,
-      lastSeenAt: d.lastSeenAt,
+      firstSeenAt: d.first_seen_at,
+      lastSeenAt: d.last_seen_at,
     })),
     brandHistory: brandHistory.map((b) => ({
       brand: b.brand,
-      firstSeenAt: b.firstSeenAt,
-      lastSeenAt: b.lastSeenAt,
+      firstSeenAt: b.first_seen_at,
+      lastSeenAt: b.last_seen_at,
     })),
   };
 }
@@ -422,79 +412,60 @@ export async function getProductDetail(
 export async function getPriceHistory(
   productKey: string
 ): Promise<PriceHistory | null> {
-  const product = await db.product.findUnique({
-    where: { productKey },
-  });
+  const db = getDb();
+
+  const product = db.prepare(
+    "SELECT * FROM products WHERE product_key = ?"
+  ).get(productKey) as any;
   if (!product) return null;
 
-  const offerings = await db.productOffering.findMany({
-    where: { productId: product.id },
-    include: {
-      publication: {
-        select: {
-          id: true,
-          slug: true,
-          originalTitle: true,
-          fetchedAt: true,
-          validFor: true,
-        },
-      },
-    },
-    orderBy: { publication: { fetchedAt: "asc" } },
-  });
+  const offerings = db.prepare(
+    `SELECT o.*, pub.id as pub_id, pub.slug as pub_slug, pub.original_title as pub_title,
+            pub.fetched_at as pub_fetched, pub.valid_for as pub_valid
+     FROM product_offerings o
+     JOIN publications pub ON pub.id = o.publication_id
+     WHERE o.product_id = ?
+     ORDER BY pub.fetched_at ASC`
+  ).all(product.id) as any[];
 
-  // Group by publication (a product may have multiple offerings in one pub)
-  const byPub = new Map<
-    number,
-    {
-      pub: (typeof offerings)[number]["publication"];
-      offerings: (typeof offerings)[number][];
-    }
-  >();
+  // Group by publication
+  const byPub = new Map<number, any[]>();
   for (const o of offerings) {
-    if (!byPub.has(o.publicationId)) {
-      byPub.set(o.publicationId, { pub: o.publication, offerings: [] });
-    }
-    byPub.get(o.publicationId)!.offerings.push(o);
+    if (!byPub.has(o.pub_id)) byPub.set(o.pub_id, []);
+    byPub.get(o.pub_id)!.push(o);
   }
 
   const history: PriceHistoryEntry[] = [];
-  for (const [, { pub, offerings: offs }] of byPub) {
-    const prices = offs
-      .map((o) => o.priceNumeric)
-      .filter((p): p is number => p !== null);
+  for (const [pubId, offs] of byPub) {
+    const prices = offs.map((o) => o.price_numeric).filter((p: any) => p !== null);
     const webshopIds = offs
-      .map((o) => o.webshopIdentifier)
-      .filter((x): x is string => x !== null && x !== "");
+      .map((o) => o.webshop_identifier)
+      .filter((x: any) => x !== null && x !== "");
 
     history.push({
-      publicationId: pub.id,
-      publicationSlug: pub.slug,
-      publicationOriginalTitle: pub.originalTitle,
-      fetchedAt: pub.fetchedAt,
-      validFor: pub.validFor,
-      titleThisWeek: offs[0]?.title ?? null,
+      publicationId: pubId,
+      publicationSlug: offs[0].pub_slug,
+      publicationOriginalTitle: offs[0].pub_title,
+      fetchedAt: offs[0].pub_fetched,
+      validFor: offs[0].pub_valid,
+      titleThisWeek: offs[0].title,
       priceMin: prices.length ? Math.min(...prices) : null,
       priceMax: prices.length ? Math.max(...prices) : null,
-      priceAvg: prices.length
-        ? prices.reduce((a, b) => a + b, 0) / prices.length
-        : null,
-      currency: offs[0]?.currency ?? "EUR",
-      productType: offs[0]?.productType ?? null,
-      pageRange: offs[0]?.pageRange ?? null,
+      priceAvg: prices.length ? prices.reduce((a: number, b: number) => a + b, 0) / prices.length : null,
+      currency: offs[0].currency || "EUR",
+      productType: offs[0].product_type,
+      pageRange: offs[0].page_range,
       nOfferings: offs.length,
-      webshopIdentifiers: webshopIds.length
-        ? Array.from(new Set(webshopIds)).join(",")
-        : null,
+      webshopIdentifiers: webshopIds.length ? Array.from(new Set(webshopIds)).join(",") : null,
     });
   }
 
   return {
-    productKey: product.productKey,
-    canonicalTitle: product.canonicalTitle,
-    canonicalType: product.canonicalType,
-    firstSeenAt: product.firstSeenAt,
-    lastSeenAt: product.lastSeenAt,
+    productKey: product.product_key,
+    canonicalTitle: product.canonical_title,
+    canonicalType: product.canonical_type,
+    firstSeenAt: product.first_seen_at,
+    lastSeenAt: product.last_seen_at,
     history,
   };
 }
@@ -503,59 +474,53 @@ export async function getDiff(
   pubAId: number,
   pubBId: number
 ): Promise<DiffResult> {
-  const [pubA, pubB] = await Promise.all([
-    db.publication.findUnique({
-      where: { id: pubAId },
-      select: { id: true, slug: true, originalTitle: true },
-    }),
-    db.publication.findUnique({
-      where: { id: pubBId },
-      select: { id: true, slug: true, originalTitle: true },
-    }),
-  ]);
+  const db = getDb();
+
+  const pubA = db.prepare(
+    "SELECT id, slug, original_title FROM publications WHERE id = ?"
+  ).get(pubAId) as any;
+  const pubB = db.prepare(
+    "SELECT id, slug, original_title FROM publications WHERE id = ?"
+  ).get(pubBId) as any;
+
   if (!pubA || !pubB) {
     throw new Error("Publication not found");
   }
 
-  // Get all offerings in both pubs, joined with product
-  const [offA, offB] = await Promise.all([
-    db.productOffering.findMany({
-      where: { publicationId: pubAId },
-      include: { product: true },
-    }),
-    db.productOffering.findMany({
-      where: { publicationId: pubBId },
-      include: { product: true },
-    }),
-  ]);
+  const offA = db.prepare(
+    `SELECT o.*, p.product_key, p.canonical_title
+     FROM product_offerings o
+     JOIN products p ON p.id = o.product_id
+     WHERE o.publication_id = ?`
+  ).all(pubAId) as any[];
 
-  // Group by productKey -> { min price in A, min price in B }
-  const mapA = new Map<string, { product: typeof offA[number]["product"]; minPrice: number | null }>();
-  for (const o of offA) {
-    const key = o.product.productKey;
-    const price = o.priceNumeric;
-    if (!mapA.has(key)) {
-      mapA.set(key, { product: o.product, minPrice: price });
-    } else {
-      const existing = mapA.get(key)!;
-      if (price !== null && (existing.minPrice === null || price < existing.minPrice)) {
-        existing.minPrice = price;
+  const offB = db.prepare(
+    `SELECT o.*, p.product_key, p.canonical_title
+     FROM product_offerings o
+     JOIN products p ON p.id = o.product_id
+     WHERE o.publication_id = ?`
+  ).all(pubBId) as any[];
+
+  // Build maps: product_key -> { canonical_title, min_price }
+  function buildMap(offs: any[]) {
+    const m = new Map<string, { canonicalTitle: string | null; minPrice: number | null }>();
+    for (const o of offs) {
+      const key = o.product_key;
+      const price = o.price_numeric;
+      if (!m.has(key)) {
+        m.set(key, { canonicalTitle: o.canonical_title, minPrice: price });
+      } else {
+        const existing = m.get(key)!;
+        if (price !== null && (existing.minPrice === null || price < existing.minPrice)) {
+          existing.minPrice = price;
+        }
       }
     }
+    return m;
   }
-  const mapB = new Map<string, { product: typeof offB[number]["product"]; minPrice: number | null }>();
-  for (const o of offB) {
-    const key = o.product.productKey;
-    const price = o.priceNumeric;
-    if (!mapB.has(key)) {
-      mapB.set(key, { product: o.product, minPrice: price });
-    } else {
-      const existing = mapB.get(key)!;
-      if (price !== null && (existing.minPrice === null || price < existing.minPrice)) {
-        existing.minPrice = price;
-      }
-    }
-  }
+
+  const mapA = buildMap(offA);
+  const mapB = buildMap(offB);
 
   const added: DiffResult["added"] = [];
   const removed: DiffResult["removed"] = [];
@@ -563,20 +528,13 @@ export async function getDiff(
 
   for (const [key, val] of mapB) {
     if (!mapA.has(key)) {
-      added.push({
-        productKey: key,
-        canonicalTitle: val.product.canonicalTitle,
-      });
+      added.push({ productKey: key, canonicalTitle: val.canonicalTitle });
     } else {
       const a = mapA.get(key)!;
-      if (
-        a.minPrice !== null &&
-        val.minPrice !== null &&
-        a.minPrice !== val.minPrice
-      ) {
+      if (a.minPrice !== null && val.minPrice !== null && a.minPrice !== val.minPrice) {
         priceChanges.push({
           productKey: key,
-          canonicalTitle: val.product.canonicalTitle,
+          canonicalTitle: val.canonicalTitle,
           oldPrice: a.minPrice,
           newPrice: val.minPrice,
           oldPubId: pubAId,
@@ -587,10 +545,7 @@ export async function getDiff(
   }
   for (const [key, val] of mapA) {
     if (!mapB.has(key)) {
-      removed.push({
-        productKey: key,
-        canonicalTitle: val.product.canonicalTitle,
-      });
+      removed.push({ productKey: key, canonicalTitle: val.canonicalTitle });
     }
   }
 
@@ -600,55 +555,34 @@ export async function getDiff(
 export async function listCategories(
   publicationId?: number
 ): Promise<CategoryEntry[]> {
-  const where: Record<string, unknown> = {
-    productType: { not: null, not: "" },
-  };
+  const db = getDb();
+  let sql = `SELECT product_type as name, COUNT(*) as count
+             FROM product_offerings
+             WHERE product_type IS NOT NULL AND product_type != ''`;
+  const vals: any[] = [];
   if (publicationId) {
-    where.publicationId = publicationId;
+    sql += " AND publication_id = ?";
+    vals.push(publicationId);
   }
-  const result = await db.productOffering.groupBy({
-    by: ["productType"],
-    where,
-    _count: { _all: true },
-    orderBy: { _count: { productType: "desc" } },
-  });
-  return result.map((r) => ({
-    name: r.productType ?? "",
-    count: r._count._all,
-  }));
-}
-
-export interface BrandEntry {
-  name: string;
-  count: number;
-  avgPrice: number | null;
-  minPrice: number | null;
-  maxPrice: number | null;
+  sql += " GROUP BY product_type ORDER BY count DESC";
+  return db.prepare(sql).all(...vals) as CategoryEntry[];
 }
 
 export async function listBrands(
   publicationId?: number
 ): Promise<BrandEntry[]> {
-  const where: Record<string, unknown> = {
-    brand: { not: null, not: "" },
-  };
+  const db = getDb();
+  let sql = `SELECT brand as name, COUNT(*) as count,
+                    AVG(price_numeric) as avgPrice,
+                    MIN(price_numeric) as minPrice,
+                    MAX(price_numeric) as maxPrice
+             FROM product_offerings
+             WHERE brand IS NOT NULL AND brand != ''`;
+  const vals: any[] = [];
   if (publicationId) {
-    where.publicationId = publicationId;
+    sql += " AND publication_id = ?";
+    vals.push(publicationId);
   }
-  const result = await db.productOffering.groupBy({
-    by: ["brand"],
-    where,
-    _count: { _all: true },
-    _avg: { priceNumeric: true },
-    _min: { priceNumeric: true },
-    _max: { priceNumeric: true },
-    orderBy: { _count: { brand: "desc" } },
-  });
-  return result.map((r) => ({
-    name: r.brand ?? "",
-    count: r._count._all,
-    avgPrice: r._avg.priceNumeric,
-    minPrice: r._min.priceNumeric,
-    maxPrice: r._max.priceNumeric,
-  }));
+  sql += " GROUP BY brand ORDER BY count DESC";
+  return db.prepare(sql).all(...vals) as BrandEntry[];
 }
