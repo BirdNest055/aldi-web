@@ -1,5 +1,5 @@
 /**
- * Standardized API error handling for aldi-web (Discount Database).
+ * Standardized API error handling for discount-database.
  *
  * Same pattern as aldi-map — see that project for full docs.
  *
