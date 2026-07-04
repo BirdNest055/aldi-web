@@ -30,7 +30,7 @@ async function handler(req: NextRequest) {
   if (sp.get("sort")) {
     const s = sp.get("sort") as ListProductsParams["sort"];
     const valid: ListProductsParams["sort"][] = [
-      "price-asc", "price-desc", "title-asc", "title-desc", "newest",
+      "price-asc", "price-desc", "title-asc", "title-desc", "discount-pct", "newest",
     ];
     if (valid.includes(s)) params.sort = s;
   }

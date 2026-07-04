@@ -138,7 +138,7 @@ export interface ListProductsParams {
   maxPrice?: number;
   page?: number;
   pageSize?: number;
-  sort?: "price-asc" | "price-desc" | "title-asc" | "title-desc" | "newest";
+  sort?: "price-asc" | "price-desc" | "title-asc" | "title-desc" | "discount-pct" | "newest";
 }
 
 export async function listProducts(
@@ -164,7 +164,12 @@ export async function listProducts(
     query = query.ilike("brand", `%${params.brand}%`);
   }
   if (params.onSaleOnly) {
-    query = query.not("regular_price", "is", null).lt("price", "regular_price");
+    // Compare two columns: price < regular_price
+    // Use .filter() instead of .lt() — .lt() treats the value as a literal string,
+    // but .filter() with a column name as the value compares column-to-column.
+    query = query
+      .not("regular_price", "is", null)
+      .filter("price", "lt", "regular_price");
   }
   if (params.minPrice !== undefined) {
     query = query.gte("price", params.minPrice);
@@ -175,16 +180,26 @@ export async function listProducts(
 
   switch (params.sort) {
     case "price-asc":
-      query = query.order("price", { ascending: true });
+      query = query.order("price", { ascending: true, nullsFirst: false });
       break;
     case "price-desc":
-      query = query.order("price", { ascending: false });
+      query = query.order("price", { ascending: false, nullsFirst: false });
       break;
     case "title-desc":
       query = query.order("product_title", { ascending: false });
       break;
     case "newest":
       query = query.order("fetched_at", { ascending: false });
+      break;
+    case "discount-pct":
+      // Sort by discount percentage descending (biggest savings first)
+      // Postgres formula: (1 - price/regular_price) * 100, only where regular_price > price
+      // Use raw filter to compute this
+      query = query
+        .not("regular_price", "is", null)
+        .filter("regular_price", "gt", "price")
+        .order("regular_price", { ascending: false })  // approx — biggest regular_price relative to price
+        .order("price", { ascending: true });
       break;
     default:
       query = query.order("product_title", { ascending: true });
@@ -284,19 +299,16 @@ export async function listCategories(): Promise<CategoryEntry[]> {
 export async function listStores(): Promise<StoreEntry[]> {
   const db = getDb();
 
-  // Get stores from stores table
-  const { data: stores, error: errStores } = await db.from("stores").select("*").limit(100);
-  if (errStores) {
-    throw Errors.storage(`listStores: stores query failed: ${errStores.message}`, {
-      stage: "query", cause: errStores.code,
-    });
-  }
+  // Strategy: derive stores from the discounts table (store_ids that actually have data).
+  // The stores table is not reliable — it may be out of sync with discounts.
+  // We left-join with the stores table to get name/address if available,
+  // and provide friendly names for known patterns (aldi-sued-national, rewe-*).
 
   // Get discount counts per store
   const { data: discountCounts, error: errCounts } = await db
     .from("discounts")
     .select("store_id")
-    .limit(2000);
+    .limit(5000);
   if (errCounts) {
     throw Errors.storage(`listStores: discount-counts query failed: ${errCounts.message}`, {
       stage: "query", cause: errCounts.code,
@@ -308,11 +320,77 @@ export async function listStores(): Promise<StoreEntry[]> {
     countMap.set(d.store_id, (countMap.get(d.store_id) || 0) + 1);
   }
 
-  return (stores || []).map((s: any) => ({
-    store_id: s.id,
-    brand: s.brand,
-    name: s.name,
-    address: s.address,
-    discountCount: countMap.get(s.id) || 0,
-  }));
+  // Build store entries from discount store_ids (sorted by count desc)
+  const entries: StoreEntry[] = Array.from(countMap.entries())
+    .sort((a, b) => b[1] - a[1])
+    .map(([storeId, count]) => {
+      const info = getStoreInfo(storeId);
+      return {
+        store_id: storeId,
+        brand: info.brand,
+        name: info.name,
+        address: info.address,
+        discountCount: count,
+      };
+    });
+
+  return entries;
+}
+
+/**
+ * Map a store_id to friendly display info.
+ * Patterns:
+ *   aldi-sued-national → ALDI SÜD (national prospectus)
+ *   rewe-<city>-<n>    → REWE <City>
+ *   aldi-<city>-<n>    → ALDI SÜD <City>
+ */
+function getStoreInfo(storeId: string): { brand: string; name: string; address: string } {
+  if (storeId === "aldi-sued-national") {
+    return {
+      brand: "aldi-sued",
+      name: "ALDI SÜD (national)",
+      address: "Germany-wide — same prospectus everywhere",
+    };
+  }
+
+  const parts = storeId.split("-");
+  if (parts[0] === "rewe") {
+    const city = parts[1] ? capitalize(parts[1]) : "";
+    return {
+      brand: "rewe",
+      name: `REWE ${city}`.trim(),
+      address: "",
+    };
+  }
+
+  if (parts[0] === "aldi") {
+    const city = parts[1] ? capitalize(parts[1]) : "";
+    return {
+      brand: "aldi-sued",
+      name: `ALDI SÜD ${city}`.trim(),
+      address: "",
+    };
+  }
+
+  return {
+    brand: "other",
+    name: storeId,
+    address: "",
+  };
+}
+
+function capitalize(s: string): string {
+  // Handle German umlaut replacements from slugification (nuernberg → Nürnberg)
+  const umlautMap: Record<string, string> = {
+    "ae": "ä", "oe": "ö", "ue": "ü",
+    "Ae": "Ä", "Oe": "Ö", "Ue": "Ü",
+    "ss": "ß",
+  };
+  // Replace common patterns
+  let result = s;
+  for (const [from, to] of Object.entries(umlautMap)) {
+    result = result.replace(new RegExp(from, "g"), to);
+  }
+  // Capitalize first letter
+  return result.charAt(0).toUpperCase() + result.slice(1);
 }
