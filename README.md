@@ -2,10 +2,10 @@
 
 > **v2.2.0** — Browse all discount products across all supermarkets + comprehensive error handling.
 
-[![Vercel](https://img.shields.io/badge/deployed%20on-Vercel-black)](https://aldi-web-git-main-birdnest055s-projects.vercel.app)
+[![Vercel](https://img.shields.io/badge/deployed%20on-Vercel-black)](https://discount-database-git-main-birdnest055s-projects.vercel.app)
 [![Version](https://img.shields.io/badge/version-2.2.0-blue)](#)
 
-**Live:** https://aldi-web-git-main-birdnest055s-projects.vercel.app
+**Live:** https://discount-database-git-main-birdnest055s-projects.vercel.app
 
 ## What it does
 
@@ -23,8 +23,8 @@ Shows all discount products from all supermarkets (ALDI SÜD + REWE) stored in S
 ## Data source
 
 All data comes from **Supabase** (PostgreSQL). The `discounts` table contains products fetched by:
-- **ALDI SÜD:** Direct XHR API (via aldi-map app, instant)
-- **REWE:** CloakBrowser + GitHub Actions (via aldi-map app, ~60-90s async)
+- **ALDI SÜD:** Direct XHR API (via discount-map app, instant)
+- **REWE:** CloakBrowser + GitHub Actions (via discount-map app, ~60-90s async)
 
 ## Tech stack
 
