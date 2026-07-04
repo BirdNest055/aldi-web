@@ -1,11 +1,6 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextResponse } from "next/server";
 import { listCategories } from "@/lib/aldi";
-
-export async function GET(req: NextRequest) {
-  const sp = req.nextUrl.searchParams;
-  const pubId = sp.get("publicationId")
-    ? Number(sp.get("publicationId"))
-    : undefined;
-  const cats = await listCategories(pubId);
+export async function GET() {
+  const cats = await listCategories();
   return NextResponse.json(cats);
 }
