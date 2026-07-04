@@ -15,7 +15,7 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "ALDI Prospekt Explorer",
+  title: "Discount Database",
   description:
     "Browse ALDI SÜD prospectus data with filters, price history charts, and week-over-week diffs.",
 };

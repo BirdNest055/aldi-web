@@ -1,13 +1,15 @@
-import { PrismaClient } from '@prisma/client'
+import { createClient } from "@supabase/supabase-js";
 
-const globalForPrisma = globalThis as unknown as {
-  prisma: PrismaClient | undefined
+let _client: any = null;
+
+export function getDb() {
+  if (!_client) {
+    const url = process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL || "";
+    const key = process.env.SUPABASE_SECRET_KEY || "";
+    if (!url || !key) {
+      throw new Error("SUPABASE_URL and SUPABASE_SECRET_KEY must be set");
+    }
+    _client = createClient(url, key);
+  }
+  return _client;
 }
-
-export const db =
-  globalForPrisma.prisma ??
-  new PrismaClient({
-    log: ['query'],
-  })
-
-if (process.env.NODE_ENV !== 'production') globalForPrisma.prisma = db
