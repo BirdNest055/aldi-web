@@ -76,7 +76,7 @@ export default function Home() {
               <span className="font-mono font-bold text-primary-foreground text-sm">D</span>
             </div>
             <div>
-              <h1 className="text-base font-semibold leading-none">Discount Database <span className="text-xs text-muted-foreground font-normal">v2.0.0</span></h1>
+              <h1 className="text-base font-semibold leading-none">Discount Database <span className="text-xs text-muted-foreground font-normal">v2.1.0</span></h1>
               <p className="text-xs text-muted-foreground mt-0.5">All products across all stores</p>
             </div>
           </div>
@@ -97,7 +97,7 @@ export default function Home() {
       <footer className="border-t border-border bg-card/30 mt-auto">
         <div className="container mx-auto px-4 py-3 text-xs text-muted-foreground flex items-center justify-between">
           <span>Data from <code className="font-mono">Supabase</code> · ALDI SÜD + REWE</span>
-          <span className="font-mono">v2.0.0</span>
+          <span className="font-mono">v2.1.0</span>
         </div>
       </footer>
     </div>
@@ -177,7 +177,7 @@ function ProductsView() {
   const [onSaleOnly, setOnSaleOnly] = useState(false);
   const [minPrice, setMinPrice] = useState("");
   const [maxPrice, setMaxPrice] = useState("");
-  const [sort, setSort] = useState<SortOption>("title-asc");
+  const [sort, setSort] = useState<SortOption>("price-asc");
   const [page, setPage] = useState(1);
   const pageSize = 50;
 
