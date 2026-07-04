@@ -164,12 +164,10 @@ export async function listProducts(
     query = query.ilike("brand", `%${params.brand}%`);
   }
   if (params.onSaleOnly) {
-    // Compare two columns: price < regular_price
-    // Use .filter() instead of .lt() — .lt() treats the value as a literal string,
-    // but .filter() with a column name as the value compares column-to-column.
-    query = query
-      .not("regular_price", "is", null)
-      .filter("price", "lt", "regular_price");
+    // Use the generated column is_on_sale (added via migration)
+    // PostgREST doesn't support column-to-column comparison, so we use a
+    // GENERATED ALWAYS AS column that computes (price < regular_price) at write time.
+    query = query.eq("is_on_sale", true);
   }
   if (params.minPrice !== undefined) {
     query = query.gte("price", params.minPrice);
@@ -193,13 +191,12 @@ export async function listProducts(
       break;
     case "discount-pct":
       // Sort by discount percentage descending (biggest savings first)
-      // Postgres formula: (1 - price/regular_price) * 100, only where regular_price > price
-      // Use raw filter to compute this
+      // Use the is_on_sale generated column to filter, then order by
+      // (regular_price - price) DESC as a proxy for biggest savings
       query = query
-        .not("regular_price", "is", null)
-        .filter("regular_price", "gt", "price")
-        .order("regular_price", { ascending: false })  // approx — biggest regular_price relative to price
-        .order("price", { ascending: true });
+        .eq("is_on_sale", true)
+        .order("regular_price", { ascending: false, nullsFirst: false })
+        .order("price", { ascending: true, nullsFirst: false });
       break;
     default:
       query = query.order("product_title", { ascending: true });
