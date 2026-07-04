@@ -1,4 +1,5 @@
 import { getDb } from "@/lib/db";
+import { Errors, ApiError } from "@/lib/errors";
 
 export interface Stats {
   totalDiscounts: number;
@@ -12,8 +13,8 @@ export interface Stats {
   storeList: Array<{
     store_id: string;
     count: number;
-    min_price: number;
-    max_price: number;
+    min_price: number | null;
+    max_price: number | null;
   }>;
 }
 
@@ -66,10 +67,16 @@ function parsePrice(v: any): number | null {
 export async function getStats(): Promise<Stats> {
   const db = getDb();
 
-  const { data: totalData } = await db
+  const { data: totalData, error: err1 } = await db
     .from("discounts")
     .select("product_title, brand, category, price")
     .limit(2000);
+
+  if (err1) {
+    throw Errors.storage(`getStats: discounts query failed: ${err1.message}`, {
+      stage: "query", cause: err1.code,
+    });
+  }
 
   const all = totalData || [];
   const prices = all.map((d: any) => d.price).filter((p: any) => p !== null && p !== undefined);
@@ -78,10 +85,16 @@ export async function getStats(): Promise<Stats> {
   const uniqueCategories = new Set(all.filter((d: any) => d.category).map((d: any) => d.category)).size;
 
   // Get store list with counts
-  const { data: storeData } = await db
+  const { data: storeData, error: err2 } = await db
     .from("discounts")
     .select("store_id, price")
     .limit(2000);
+
+  if (err2) {
+    throw Errors.storage(`getStats: store-data query failed: ${err2.message}`, {
+      stage: "query", cause: err2.code,
+    });
+  }
 
   const storeMap = new Map<string, { count: number; min: number; max: number }>();
   for (const d of storeData || []) {
@@ -182,8 +195,9 @@ export async function listProducts(
   const { data, error, count } = await query;
 
   if (error) {
-    console.error("Supabase query error:", error);
-    return { items: [], total: 0, page, pageSize };
+    throw Errors.storage(`listProducts: query failed: ${error.message}`, {
+      stage: "query", cause: error.code,
+    });
   }
 
   return {
@@ -212,7 +226,12 @@ export async function listBrands(): Promise<BrandEntry[]> {
     .not("brand", "is", null)
     .limit(2000);
 
-  if (error || !data) return [];
+  if (error) {
+    throw Errors.storage(`listBrands: query failed: ${error.message}`, {
+      stage: "query", cause: error.code,
+    });
+  }
+  if (!data) return [];
 
   const brandMap = new Map<string, { count: number; prices: number[] }>();
   for (const d of data) {
@@ -244,7 +263,12 @@ export async function listCategories(): Promise<CategoryEntry[]> {
     .not("category", "is", null)
     .limit(2000);
 
-  if (error || !data) return [];
+  if (error) {
+    throw Errors.storage(`listCategories: query failed: ${error.message}`, {
+      stage: "query", cause: error.code,
+    });
+  }
+  if (!data) return [];
 
   const catMap = new Map<string, number>();
   for (const d of data) {
@@ -261,13 +285,23 @@ export async function listStores(): Promise<StoreEntry[]> {
   const db = getDb();
 
   // Get stores from stores table
-  const { data: stores } = await db.from("stores").select("*").limit(100);
+  const { data: stores, error: errStores } = await db.from("stores").select("*").limit(100);
+  if (errStores) {
+    throw Errors.storage(`listStores: stores query failed: ${errStores.message}`, {
+      stage: "query", cause: errStores.code,
+    });
+  }
 
   // Get discount counts per store
-  const { data: discountCounts } = await db
+  const { data: discountCounts, error: errCounts } = await db
     .from("discounts")
     .select("store_id")
     .limit(2000);
+  if (errCounts) {
+    throw Errors.storage(`listStores: discount-counts query failed: ${errCounts.message}`, {
+      stage: "query", cause: errCounts.code,
+    });
+  }
 
   const countMap = new Map<string, number>();
   for (const d of discountCounts || []) {
