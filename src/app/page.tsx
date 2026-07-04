@@ -4,7 +4,7 @@ import { useState, useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import {
   TrendingUp, Package, Store, Tag, Search, Filter, ArrowUpDown,
-  ChevronLeft, ChevronRight, X,
+  ChevronLeft, ChevronRight, X, AlertCircle, RefreshCw,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -26,7 +26,7 @@ interface Stats {
   priceMin: number | null;
   priceMax: number | null;
   priceAvg: number | null;
-  storeList: Array<{ store_id: string; count: number; min_price: number; max_price: number; }>;
+  storeList: Array<{ store_id: string; count: number; min_price: number | null; max_price: number | null; }>;
 }
 
 interface ProductListItem {
@@ -76,7 +76,7 @@ export default function Home() {
               <span className="font-mono font-bold text-primary-foreground text-sm">D</span>
             </div>
             <div>
-              <h1 className="text-base font-semibold leading-none">Discount Database <span className="text-xs text-muted-foreground font-normal">v2.1.0</span></h1>
+              <h1 className="text-base font-semibold leading-none">Discount Database <span className="text-xs text-muted-foreground font-normal">v2.2.0</span></h1>
               <p className="text-xs text-muted-foreground mt-0.5">All products across all stores</p>
             </div>
           </div>
@@ -97,7 +97,7 @@ export default function Home() {
       <footer className="border-t border-border bg-card/30 mt-auto">
         <div className="container mx-auto px-4 py-3 text-xs text-muted-foreground flex items-center justify-between">
           <span>Data from <code className="font-mono">Supabase</code> · ALDI SÜD + REWE</span>
-          <span className="font-mono">v2.1.0</span>
+          <span className="font-mono">v2.2.0</span>
         </div>
       </footer>
     </div>
@@ -105,11 +105,54 @@ export default function Home() {
 }
 
 function Dashboard() {
-  const { data: stats, isLoading } = useQuery({
+  const { data: stats, isLoading, isError, error, refetch } = useQuery({
     queryKey: ["stats"],
-    queryFn: () => fetch("/api/stats").then((r) => r.json() as Promise<Stats>),
+    queryFn: async () => {
+      const r = await fetch("/api/stats");
+      const data = await r.json();
+      if (!r.ok) {
+        const err = new Error(data.error || "Failed to load stats") as Error & { code?: string };
+        err.code = data.code;
+        throw err;
+      }
+      return data as Stats;
+    },
+    retry: 1, // at most one retry on failure (anti-loop)
   });
-  if (isLoading || !stats) return <DashboardSkeleton />;
+  if (isLoading) return <DashboardSkeleton />;
+  if (isError || !stats) {
+    return (
+      <Card className="border-destructive/50">
+        <CardContent className="pt-6">
+          <div className="flex items-start gap-3">
+            <AlertCircle className="w-5 h-5 text-destructive shrink-0 mt-0.5" />
+            <div className="flex-1">
+              <p className="font-medium text-destructive text-sm">
+                Failed to load dashboard
+                {(error as any)?.code && (
+                  <span className="ml-2 font-mono text-xs px-1.5 py-0.5 rounded bg-destructive/10">
+                    {(error as any).code}
+                  </span>
+                )}
+              </p>
+              <p className="text-sm text-muted-foreground mt-1">
+                {(error as Error)?.message || "Unknown error"}
+              </p>
+              <Button
+                variant="outline"
+                size="sm"
+                className="mt-3 gap-1.5"
+                onClick={() => refetch()}
+              >
+                <RefreshCw className="w-3.5 h-3.5" />
+                Retry
+              </Button>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+    );
+  }
 
   return (
     <div className="space-y-6">
@@ -203,7 +246,20 @@ function ProductsView() {
     return p.toString();
   }, [storeId, debouncedSearch, category, brand, onSaleOnly, minPrice, maxPrice, sort, page]);
 
-  const { data, isLoading } = useQuery({ queryKey: ["products", qs], queryFn: () => fetch(`/api/products?${qs}`).then((r) => r.json() as Promise<ProductListResult>) });
+  const { data, isLoading, isError: isProductsError, error: productsError, refetch: refetchProducts } = useQuery({
+    queryKey: ["products", qs],
+    queryFn: async () => {
+      const r = await fetch(`/api/products?${qs}`);
+      const d = await r.json();
+      if (!r.ok) {
+        const err = new Error(d.error || "Failed to load products") as Error & { code?: string };
+        err.code = d.code;
+        throw err;
+      }
+      return d as ProductListResult;
+    },
+    retry: 1,
+  });
   const totalPages = data ? Math.ceil(data.total / data.pageSize) : 1;
   const storesWithDiscounts = storesData?.filter((s) => s.discountCount > 0) ?? [];
 
@@ -282,6 +338,32 @@ function ProductsView() {
       <Card><CardContent className="p-0">
         {isLoading ? (
           <div className="p-6 space-y-3">{[...Array(8)].map((_, i) => (<Skeleton key={i} className="h-12 w-full" />))}</div>
+        ) : isProductsError ? (
+          <div className="p-6 flex items-start gap-3">
+            <AlertCircle className="w-5 h-5 text-destructive shrink-0 mt-0.5" />
+            <div className="flex-1">
+              <p className="font-medium text-destructive text-sm">
+                Failed to load products
+                {(productsError as any)?.code && (
+                  <span className="ml-2 font-mono text-xs px-1.5 py-0.5 rounded bg-destructive/10">
+                    {(productsError as any).code}
+                  </span>
+                )}
+              </p>
+              <p className="text-sm text-muted-foreground mt-1">
+                {(productsError as Error)?.message || "Unknown error"}
+              </p>
+              <Button
+                variant="outline"
+                size="sm"
+                className="mt-3 gap-1.5"
+                onClick={() => refetchProducts()}
+              >
+                <RefreshCw className="w-3.5 h-3.5" />
+                Retry
+              </Button>
+            </div>
+          </div>
         ) : data && data.items.length > 0 ? (
           <div className="divide-y divide-border">
             {data.items.map((p) => {
