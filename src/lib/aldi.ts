@@ -149,6 +149,13 @@ export async function listProducts(
   const pageSize = params.pageSize ?? 50;
   const offset = (page - 1) * pageSize;
 
+  // Special case: discount-pct sort requires client-side computation
+  // because PostgREST can't compute (1 - price/regular_price) * 100 in ORDER BY.
+  // We fetch all on-sale products (matching other filters), sort client-side, then paginate.
+  if (params.sort === "discount-pct") {
+    return listProductsByDiscountPct(db, params, page, pageSize, offset);
+  }
+
   let query = db.from("discounts").select("*", { count: "exact" });
 
   if (params.storeId) {
@@ -189,15 +196,6 @@ export async function listProducts(
     case "newest":
       query = query.order("fetched_at", { ascending: false });
       break;
-    case "discount-pct":
-      // Sort by discount percentage descending (biggest savings first)
-      // Use the is_on_sale generated column to filter, then order by
-      // (regular_price - price) DESC as a proxy for biggest savings
-      query = query
-        .eq("is_on_sale", true)
-        .order("regular_price", { ascending: false, nullsFirst: false })
-        .order("price", { ascending: true, nullsFirst: false });
-      break;
     default:
       query = query.order("product_title", { ascending: true });
   }
@@ -225,6 +223,83 @@ export async function listProducts(
       fetched_at: d.fetched_at,
     })),
     total: count || 0,
+    page,
+    pageSize,
+  };
+}
+
+/**
+ * Special handler for discount-pct sort.
+ * Fetches all on-sale products (matching filters), computes discount %,
+ * sorts client-side, then paginates.
+ *
+ * This is necessary because PostgREST can't compute (1 - price/regular_price) * 100
+ * in the ORDER BY clause.
+ */
+async function listProductsByDiscountPct(
+  db: any,
+  params: ListProductsParams,
+  page: number,
+  pageSize: number,
+  offset: number,
+): Promise<ProductListResult> {
+  let query = db
+    .from("discounts")
+    .select("*")
+    .eq("is_on_sale", true)
+    .limit(2000); // fetch all on-sale products (typically < 100)
+
+  if (params.storeId) {
+    query = query.eq("store_id", params.storeId);
+  }
+  if (params.search) {
+    query = query.or(`product_title.ilike.%${params.search}%,brand.ilike.%${params.search}%,category.ilike.%${params.search}%`);
+  }
+  if (params.category) {
+    query = query.ilike("category", `%${params.category}%`);
+  }
+  if (params.brand) {
+    query = query.ilike("brand", `%${params.brand}%`);
+  }
+  if (params.minPrice !== undefined) {
+    query = query.gte("price", params.minPrice);
+  }
+  if (params.maxPrice !== undefined) {
+    query = query.lte("price", params.maxPrice);
+  }
+
+  const { data, error } = await query;
+
+  if (error) {
+    throw Errors.storage(`listProductsByDiscountPct: query failed: ${error.message}`, {
+      stage: "query", cause: error.code,
+    });
+  }
+
+  // Compute discount %, sort descending, paginate
+  const all = (data || []).map((d: any) => ({
+    id: d.id,
+    store_id: d.store_id,
+    product_title: d.product_title,
+    brand: d.brand,
+    price: parsePrice(d.price),
+    regular_price: parsePrice(d.regular_price),
+    currency: d.currency || "EUR",
+    category: d.category,
+    fetched_at: d.fetched_at,
+    _discountPct: d.price && d.regular_price
+      ? (1 - d.price / d.regular_price) * 100
+      : 0,
+  }));
+
+  all.sort((a: any, b: any) => b._discountPct - a._discountPct);
+
+  const total = all.length;
+  const pageItems = all.slice(offset, offset + pageSize).map(({ _discountPct, ...item }: any) => item);
+
+  return {
+    items: pageItems,
+    total,
     page,
     pageSize,
   };
