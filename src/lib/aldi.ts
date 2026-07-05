@@ -68,46 +68,45 @@ function parsePrice(v: any): number | null {
 export async function getStats(): Promise<Stats> {
   const db = getDb();
 
-  const { data: totalData, error: err1 } = await db
-    .from("discounts")
-    .select("product_title, brand, category, price")
-    .limit(2000);
-
-  if (err1) {
-    throw Errors.storage(`getStats: discounts query failed: ${err1.message}`, {
-      stage: "query", cause: err1.code,
-    });
+  // Paginate — Supabase REST API caps at 1000 rows per request
+  const PAGE_SIZE = 500;
+  let all: any[] = [];
+  let offset = 0;
+  while (true) {
+    const { data, error: err1 } = await db
+      .from("discounts")
+      .select("product_title, brand, category, price, store_id")
+      .order("id")
+      .range(offset, offset + PAGE_SIZE - 1);
+    if (err1) {
+      throw Errors.storage(`getStats: discounts query failed: ${err1.message}`, {
+        stage: "query", cause: err1.code,
+      });
+    }
+    if (!data || data.length === 0) break;
+    all = all.concat(data);
+    if (data.length < PAGE_SIZE) break;
+    offset += PAGE_SIZE;
   }
 
-  const all = totalData || [];
-  const prices = all.map((d: any) => d.price).filter((p: any) => p !== null && p !== undefined);
+  const prices = all.map((d: any) => Number(d.price)).filter((p: number) => !isNaN(p));
   const uniqueProducts = new Set(all.map((d: any) => d.product_title)).size;
   const uniqueBrands = new Set(all.filter((d: any) => d.brand).map((d: any) => d.brand)).size;
   const uniqueCategories = new Set(all.filter((d: any) => d.category).map((d: any) => d.category)).size;
 
-  // Get store list with counts
-  const { data: storeData, error: err2 } = await db
-    .from("discounts")
-    .select("store_id, price")
-    .limit(2000);
-
-  if (err2) {
-    throw Errors.storage(`getStats: store-data query failed: ${err2.message}`, {
-      stage: "query", cause: err2.code,
-    });
-  }
-
+  // Build store map from the same paginated data (no second query needed)
   const storeMap = new Map<string, { count: number; min: number; max: number }>();
-  for (const d of storeData || []) {
+  for (const d of all) {
     const sid = d.store_id;
     if (!storeMap.has(sid)) {
       storeMap.set(sid, { count: 0, min: Infinity, max: -Infinity });
     }
     const s = storeMap.get(sid)!;
     s.count++;
-    if (d.price !== null) {
-      s.min = Math.min(s.min, d.price);
-      s.max = Math.max(s.max, d.price);
+    const p = Number(d.price);
+    if (!isNaN(p)) {
+      s.min = Math.min(s.min, p);
+      s.max = Math.max(s.max, p);
     }
   }
 
@@ -321,11 +320,23 @@ async function listProductsByDiscountPct(
 
 export async function listBrands(): Promise<BrandEntry[]> {
   const db = getDb();
-  const { data, error } = await db
-    .from("discounts")
-    .select("brand, price")
-    .not("brand", "is", null)
-    .limit(2000);
+  let data: any[] = [];
+  let offset = 0;
+  while (true) {
+    const { data: page, error } = await db
+      .from("discounts")
+      .select("brand, price")
+      .not("brand", "is", null)
+      .order("id")
+      .range(offset, offset + 499);
+    if (error) {
+      throw Errors.storage(`listBrands: query failed: ${error.message}`, { stage: "query", cause: error.code });
+    }
+    if (!page || page.length === 0) break;
+    data = data.concat(page);
+    if (page.length < 500) break;
+    offset += 500;
+  }
 
   if (error) {
     throw Errors.storage(`listBrands: query failed: ${error.message}`, {
@@ -358,11 +369,23 @@ export async function listBrands(): Promise<BrandEntry[]> {
 
 export async function listCategories(): Promise<CategoryEntry[]> {
   const db = getDb();
-  const { data, error } = await db
-    .from("discounts")
-    .select("category")
-    .not("category", "is", null)
-    .limit(2000);
+  let data: any[] = [];
+  let offset = 0;
+  while (true) {
+    const { data: page, error } = await db
+      .from("discounts")
+      .select("category")
+      .not("category", "is", null)
+      .order("id")
+      .range(offset, offset + 499);
+    if (error) {
+      throw Errors.storage(`listCategories: query failed: ${error.message}`, { stage: "query", cause: error.code });
+    }
+    if (!page || page.length === 0) break;
+    data = data.concat(page);
+    if (page.length < 500) break;
+    offset += 500;
+  }
 
   if (error) {
     throw Errors.storage(`listCategories: query failed: ${error.message}`, {
@@ -386,10 +409,24 @@ export async function listStores(): Promise<StoreEntry[]> {
   const db = getDb();
 
   // Get discount counts per store
-  const { data: discountCounts, error: errCounts } = await db
-    .from("discounts")
-    .select("store_id")
-    .limit(5000);
+  let discountCounts: any[] = [];
+  let dcOffset = 0;
+  while (true) {
+    const { data: dcPage, error: errCounts } = await db
+      .from("discounts")
+      .select("store_id")
+      .order("id")
+      .range(dcOffset, dcOffset + 499);
+    if (errCounts) {
+      throw Errors.storage(`listStores: discount-counts query failed: ${errCounts.message}`, {
+        stage: "query", cause: errCounts.code,
+      });
+    }
+    if (!dcPage || dcPage.length === 0) break;
+    discountCounts = discountCounts.concat(dcPage);
+    if (dcPage.length < 500) break;
+    dcOffset += 500;
+  }
   if (errCounts) {
     throw Errors.storage(`listStores: discount-counts query failed: ${errCounts.message}`, {
       stage: "query", cause: errCounts.code,
