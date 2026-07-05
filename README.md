@@ -1,9 +1,9 @@
 # Discount Database
 
-> **v2.3.0** — Browse all discount products across all supermarkets + comprehensive UX + discount % tracking.
+> **v2.4.0** — Browse all discount products across all supermarkets + product detail view with price history + discount % tracking.
 
 [![Vercel](https://img.shields.io/badge/deployed%20on-Vercel-black)](https://discount-database-git-main-birdnest055s-projects.vercel.app)
-[![Version](https://img.shields.io/badge/version-2.3.0-blue)](#)
+[![Version](https://img.shields.io/badge/version-2.4.0-blue)](#)
 
 **Live:** https://discount-database-git-main-birdnest055s-projects.vercel.app
 
@@ -108,6 +108,7 @@ Use this for uptime monitors (e.g. Vercel cron, BetterUptime, etc.).
 
 | Version | Date | Changes |
 |---|---|---|
+| 2.4.0 | 2026-07-05 | Product detail view: click any product → side sheet with price history (same product across all stores), similar products (same category), store info, discount %, savings amount. New API: GET /api/products/\<id\> |
 | 2.3.0 | 2026-07-04 | Comprehensive UX overhaul: fix On-sale filter (is_on_sale generated column), fix Store dropdown, discount % badges + savings amount, friendly store names, ALDI/REWE color dots + legend, active filter chips, in-search clear (×), URL-synced filters (deep-linking), loading skeletons, date with year, bottom pagination + jump-to-page, empty state with CTA, error message sanitization, discount-pct sort |
 | 2.2.0 | 2026-07-04 | Comprehensive error handling: typed ApiError, error UI states, retry buttons, error boundaries, health check, removed broken prebuild script + Prisma deps |
 | 2.1.0 | 2026-07-04 | Default sort = price ascending (cheapest first) |
