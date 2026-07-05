@@ -15,6 +15,7 @@ export interface Stats {
     count: number;
     min_price: number | null;
     max_price: number | null;
+    address: string | null;
   }>;
 }
 
@@ -110,6 +111,18 @@ export async function getStats(): Promise<Stats> {
     }
   }
 
+  // Fetch addresses from stores table
+  const storeIds = Array.from(storeMap.keys());
+  let addressLookup = new Map<string, string>();
+  try {
+    const { data: storeRows } = await db.from("stores").select("id, address").in("id", storeIds).limit(500);
+    if (storeRows) {
+      for (const s of storeRows) {
+        if (s.address) addressLookup.set(s.id, s.address);
+      }
+    }
+  } catch {}
+
   return {
     totalDiscounts: all.length,
     uniqueProducts,
@@ -124,6 +137,7 @@ export async function getStats(): Promise<Stats> {
       count: v.count,
       min_price: v.min === Infinity ? null : v.min,
       max_price: v.max === -Infinity ? null : v.max,
+      address: addressLookup.get(store_id) || null,
     })),
   };
 }

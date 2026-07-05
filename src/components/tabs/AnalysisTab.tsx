@@ -7,7 +7,13 @@ import { Skeleton } from "@/components/ui/skeleton";
 const STORE_COLORS: Record<string, string> = { "aldi-sued": "#1a7a3a", "rewe": "#e30613" };
 const fmt = (n: number | null | undefined) => n == null ? "—" : `${n.toFixed(2)} €`;
 function brand(id: string) { return id.startsWith("aldi") ? "aldi-sued" : id.startsWith("rewe") ? "rewe" : "other"; }
-function storeName(id: string) { if (id === "aldi-sued-national") return "ALDI SÜD"; const p = id.split("-"); return p[0] === "rewe" ? `REWE ${p.slice(2).join(" ")||p[1]||""}`.trim() : p[0] === "aldi" ? `ALDI` : id; }
+function storeName(id: string) {
+  if (id === "aldi-sued-national") return "ALDI SÜD";
+  if (id.startsWith("rewe-bayern-")) return `REWE ${id.replace("rewe-bayern-","")}`;
+  if (id.startsWith("rewe-admin-")) return `REWE ${id.replace("rewe-admin-","")}`;
+  if (id.startsWith("rewe-osm-")) return `REWE ${id.replace("rewe-osm-","")}`;
+  const p = id.split("-"); return p[0] === "rewe" ? `REWE ${p.slice(1).join("-")}` : p[0] === "aldi" ? `ALDI SÜD` : id;
+}
 
 export function AnalysisTab() {
   return (
