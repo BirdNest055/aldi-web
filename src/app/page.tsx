@@ -227,7 +227,7 @@ export default function Home() {
               <span className="font-mono font-bold text-primary-foreground text-sm">D</span>
             </div>
             <div>
-              <h1 className="text-base font-semibold leading-none">Discount Database <span className="text-xs text-muted-foreground font-normal">v2.6.0</span></h1>
+              <h1 className="text-base font-semibold leading-none">Discount Database <span className="text-xs text-muted-foreground font-normal">v2.7.0</span></h1>
               <p className="text-xs text-muted-foreground mt-0.5">All products across all stores</p>
             </div>
           </div>
@@ -265,7 +265,7 @@ export default function Home() {
               <span className="w-2 h-2 rounded-full" style={{ background: STORE_BRAND_COLORS["rewe"] }} />
               REWE
             </span>
-            <span className="font-mono">v2.6.0</span>
+            <span className="font-mono">v2.7.0</span>
           </div>
         </div>
       </footer>
@@ -348,7 +348,7 @@ function Dashboard() {
                     <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ background: color }} title={brand} />
                     <div className="min-w-0">
                       <div className="text-sm font-medium truncate">{friendlyStoreName(s.store_id)}</div>
-                      <div className="text-xs text-muted-foreground font-mono truncate">{s.store_id}</div>
+                      <div className="text-xs text-muted-foreground truncate">{s.address || s.store_id}</div>
                     </div>
                   </div>
                   <div className="flex items-center gap-4 text-sm shrink-0">
@@ -726,6 +726,9 @@ function ProductsView() {
                     </div>
                     <div className="flex items-center gap-3 mt-1 text-xs text-muted-foreground">
                       <span style={{ color: brandColor }} className="font-medium">{friendlyStoreName(p.store_id)}</span>
+                      {storesWithDiscounts.find((s) => s.store_id === p.store_id)?.address && (
+                        <span className="text-xs text-muted-foreground hidden md:inline">· {storesWithDiscounts.find((s) => s.store_id === p.store_id)?.address}</span>
+                      )}
                       <span className="hidden sm:inline">·</span>
                       <span className="hidden sm:inline">{fmtDate(p.fetched_at)}</span>
                     </div>

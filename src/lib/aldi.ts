@@ -371,11 +371,6 @@ export async function listCategories(): Promise<CategoryEntry[]> {
 export async function listStores(): Promise<StoreEntry[]> {
   const db = getDb();
 
-  // Strategy: derive stores from the discounts table (store_ids that actually have data).
-  // The stores table is not reliable — it may be out of sync with discounts.
-  // We left-join with the stores table to get name/address if available,
-  // and provide friendly names for known patterns (aldi-sued-national, rewe-*).
-
   // Get discount counts per store
   const { data: discountCounts, error: errCounts } = await db
     .from("discounts")
@@ -392,16 +387,37 @@ export async function listStores(): Promise<StoreEntry[]> {
     countMap.set(d.store_id, (countMap.get(d.store_id) || 0) + 1);
   }
 
+  // Fetch addresses from the stores table for all store_ids that have discounts
+  const storeIds = Array.from(countMap.keys());
+  const { data: storeRows, error: storeErr } = await db
+    .from("stores")
+    .select("id, name, brand, address, offers_url")
+    .in("id", storeIds)
+    .limit(5000);
+
+  // Build a lookup: store_id → { name, brand, address }
+  const storeLookup = new Map<string, { name: string; brand: string; address: string }>();
+  if (!storeErr && storeRows) {
+    for (const s of storeRows) {
+      storeLookup.set(s.id, {
+        name: s.name,
+        brand: s.brand,
+        address: s.address || "",
+      });
+    }
+  }
+
   // Build store entries from discount store_ids (sorted by count desc)
   const entries: StoreEntry[] = Array.from(countMap.entries())
     .sort((a, b) => b[1] - a[1])
     .map(([storeId, count]) => {
+      const dbInfo = storeLookup.get(storeId);
       const info = getStoreInfo(storeId);
       return {
         store_id: storeId,
-        brand: info.brand,
-        name: info.name,
-        address: info.address,
+        brand: dbInfo?.brand || info.brand,
+        name: dbInfo?.name || info.name,
+        address: dbInfo?.address || info.address,
         discountCount: count,
       };
     });
