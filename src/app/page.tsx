@@ -5,7 +5,7 @@ import { useQuery } from "@tanstack/react-query";
 import {
   TrendingUp, Package, Store as StoreIcon, Tag, Search, Filter, ArrowUpDown,
   ChevronLeft, ChevronRight, X, AlertCircle, RefreshCw, MapPin, Percent,
-  Flame, Trophy, Grid3x3,
+  Flame, Trophy, Grid3x3, BarChart3,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -19,6 +19,7 @@ import { ProductDetail } from "@/components/ProductDetail";
 import { HotDealsTab } from "@/components/tabs/HotDealsTab";
 import { LeaderboardTab } from "@/components/tabs/LeaderboardTab";
 import { PriceComparisonTab } from "@/components/tabs/PriceComparisonTab";
+import { AnalysisTab } from "@/components/tabs/AnalysisTab";
 
 type SortOption = "title-asc" | "title-desc" | "price-asc" | "price-desc" | "discount-pct" | "newest";
 
@@ -226,7 +227,7 @@ export default function Home() {
               <span className="font-mono font-bold text-primary-foreground text-sm">D</span>
             </div>
             <div>
-              <h1 className="text-base font-semibold leading-none">Discount Database <span className="text-xs text-muted-foreground font-normal">v2.5.0</span></h1>
+              <h1 className="text-base font-semibold leading-none">Discount Database <span className="text-xs text-muted-foreground font-normal">v2.6.0</span></h1>
               <p className="text-xs text-muted-foreground mt-0.5">All products across all stores</p>
             </div>
           </div>
@@ -237,6 +238,7 @@ export default function Home() {
             <TabsTrigger value="hot-deals" className="gap-1.5"><Flame className="w-3.5 h-3.5 text-orange-500" /> Hot Deals</TabsTrigger>
             <TabsTrigger value="leaderboard" className="gap-1.5"><Trophy className="w-3.5 h-3.5 text-amber-500" /> Leaderboard</TabsTrigger>
             <TabsTrigger value="comparison" className="gap-1.5"><Grid3x3 className="w-3.5 h-3.5 text-indigo-400" /> Compare</TabsTrigger>
+            <TabsTrigger value="analysis" className="gap-1.5"><BarChart3 className="w-3.5 h-3.5 text-purple-400" /> Analysis</TabsTrigger>
             </TabsList>
           </Tabs>
         </div>
@@ -248,6 +250,7 @@ export default function Home() {
         {tab === "hot-deals" && <HotDealsTab />}
         {tab === "leaderboard" && <LeaderboardTab />}
         {tab === "comparison" && <PriceComparisonTab />}
+        {tab === "analysis" && <AnalysisTab />}
       </main>
 
       <footer className="border-t border-border bg-card/30 mt-auto">
@@ -262,7 +265,7 @@ export default function Home() {
               <span className="w-2 h-2 rounded-full" style={{ background: STORE_BRAND_COLORS["rewe"] }} />
               REWE
             </span>
-            <span className="font-mono">v2.5.0</span>
+            <span className="font-mono">v2.6.0</span>
           </div>
         </div>
       </footer>
