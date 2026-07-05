@@ -80,6 +80,13 @@ async function handler(req: NextRequest, { params }: { params: Promise<{ id: str
     : storeId.startsWith("rewe") ? "rewe" : "other";
   const storeName = friendlyStoreName(storeId);
 
+  // Fetch store address from stores table
+  let storeAddress: string | null = null;
+  try {
+    const { data: storeRow } = await db.from("stores").select("address").eq("id", storeId).maybeSingle();
+    storeAddress = storeRow?.address || null;
+  } catch {}
+
   return NextResponse.json({
     id: product.id,
     productTitle: product.product_title,
@@ -100,6 +107,7 @@ async function handler(req: NextRequest, { params }: { params: Promise<{ id: str
       id: storeId,
       name: storeName,
       brand: storeBrand,
+      address: storeAddress,
     },
     // Price history (same product title across stores)
     priceHistory: (history || []).map((h: any) => ({

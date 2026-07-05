@@ -173,6 +173,9 @@ export function ProductDetail({
                 />
                 <div className="flex-1 min-w-0">
                   <div className="text-sm font-medium">{product.store.name}</div>
+                  {(product.store as any).address && (
+                    <div className="text-xs text-muted-foreground">{(product.store as any).address}</div>
+                  )}
                   <div className="text-xs text-muted-foreground font-mono">{product.store.id}</div>
                 </div>
                 <Badge variant="outline" className="text-xs">
