@@ -35,7 +35,7 @@ export async function GET() {
     {
       status: allOk ? "healthy" : "degraded",
       timestamp: new Date().toISOString(),
-      version: "2.2.0",
+      version: "2.3.0",
       checks,
     },
     { status: allOk ? 200 : 503 },

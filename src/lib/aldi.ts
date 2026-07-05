@@ -138,7 +138,7 @@ export interface ListProductsParams {
   maxPrice?: number;
   page?: number;
   pageSize?: number;
-  sort?: "price-asc" | "price-desc" | "title-asc" | "title-desc" | "newest";
+  sort?: "price-asc" | "price-desc" | "title-asc" | "title-desc" | "discount-pct" | "newest";
 }
 
 export async function listProducts(
@@ -148,6 +148,13 @@ export async function listProducts(
   const page = params.page ?? 1;
   const pageSize = params.pageSize ?? 50;
   const offset = (page - 1) * pageSize;
+
+  // Special case: discount-pct sort requires client-side computation
+  // because PostgREST can't compute (1 - price/regular_price) * 100 in ORDER BY.
+  // We fetch all on-sale products (matching other filters), sort client-side, then paginate.
+  if (params.sort === "discount-pct") {
+    return listProductsByDiscountPct(db, params, page, pageSize, offset);
+  }
 
   let query = db.from("discounts").select("*", { count: "exact" });
 
@@ -164,7 +171,10 @@ export async function listProducts(
     query = query.ilike("brand", `%${params.brand}%`);
   }
   if (params.onSaleOnly) {
-    query = query.not("regular_price", "is", null).lt("price", "regular_price");
+    // Use the generated column is_on_sale (added via migration)
+    // PostgREST doesn't support column-to-column comparison, so we use a
+    // GENERATED ALWAYS AS column that computes (price < regular_price) at write time.
+    query = query.eq("is_on_sale", true);
   }
   if (params.minPrice !== undefined) {
     query = query.gte("price", params.minPrice);
@@ -175,10 +185,10 @@ export async function listProducts(
 
   switch (params.sort) {
     case "price-asc":
-      query = query.order("price", { ascending: true });
+      query = query.order("price", { ascending: true, nullsFirst: false });
       break;
     case "price-desc":
-      query = query.order("price", { ascending: false });
+      query = query.order("price", { ascending: false, nullsFirst: false });
       break;
     case "title-desc":
       query = query.order("product_title", { ascending: false });
@@ -213,6 +223,83 @@ export async function listProducts(
       fetched_at: d.fetched_at,
     })),
     total: count || 0,
+    page,
+    pageSize,
+  };
+}
+
+/**
+ * Special handler for discount-pct sort.
+ * Fetches all on-sale products (matching filters), computes discount %,
+ * sorts client-side, then paginates.
+ *
+ * This is necessary because PostgREST can't compute (1 - price/regular_price) * 100
+ * in the ORDER BY clause.
+ */
+async function listProductsByDiscountPct(
+  db: any,
+  params: ListProductsParams,
+  page: number,
+  pageSize: number,
+  offset: number,
+): Promise<ProductListResult> {
+  let query = db
+    .from("discounts")
+    .select("*")
+    .eq("is_on_sale", true)
+    .limit(2000); // fetch all on-sale products (typically < 100)
+
+  if (params.storeId) {
+    query = query.eq("store_id", params.storeId);
+  }
+  if (params.search) {
+    query = query.or(`product_title.ilike.%${params.search}%,brand.ilike.%${params.search}%,category.ilike.%${params.search}%`);
+  }
+  if (params.category) {
+    query = query.ilike("category", `%${params.category}%`);
+  }
+  if (params.brand) {
+    query = query.ilike("brand", `%${params.brand}%`);
+  }
+  if (params.minPrice !== undefined) {
+    query = query.gte("price", params.minPrice);
+  }
+  if (params.maxPrice !== undefined) {
+    query = query.lte("price", params.maxPrice);
+  }
+
+  const { data, error } = await query;
+
+  if (error) {
+    throw Errors.storage(`listProductsByDiscountPct: query failed: ${error.message}`, {
+      stage: "query", cause: error.code,
+    });
+  }
+
+  // Compute discount %, sort descending, paginate
+  const all = (data || []).map((d: any) => ({
+    id: d.id,
+    store_id: d.store_id,
+    product_title: d.product_title,
+    brand: d.brand,
+    price: parsePrice(d.price),
+    regular_price: parsePrice(d.regular_price),
+    currency: d.currency || "EUR",
+    category: d.category,
+    fetched_at: d.fetched_at,
+    _discountPct: d.price && d.regular_price
+      ? (1 - d.price / d.regular_price) * 100
+      : 0,
+  }));
+
+  all.sort((a: any, b: any) => b._discountPct - a._discountPct);
+
+  const total = all.length;
+  const pageItems = all.slice(offset, offset + pageSize).map(({ _discountPct, ...item }: any) => item);
+
+  return {
+    items: pageItems,
+    total,
     page,
     pageSize,
   };
@@ -284,19 +371,16 @@ export async function listCategories(): Promise<CategoryEntry[]> {
 export async function listStores(): Promise<StoreEntry[]> {
   const db = getDb();
 
-  // Get stores from stores table
-  const { data: stores, error: errStores } = await db.from("stores").select("*").limit(100);
-  if (errStores) {
-    throw Errors.storage(`listStores: stores query failed: ${errStores.message}`, {
-      stage: "query", cause: errStores.code,
-    });
-  }
+  // Strategy: derive stores from the discounts table (store_ids that actually have data).
+  // The stores table is not reliable — it may be out of sync with discounts.
+  // We left-join with the stores table to get name/address if available,
+  // and provide friendly names for known patterns (aldi-sued-national, rewe-*).
 
   // Get discount counts per store
   const { data: discountCounts, error: errCounts } = await db
     .from("discounts")
     .select("store_id")
-    .limit(2000);
+    .limit(5000);
   if (errCounts) {
     throw Errors.storage(`listStores: discount-counts query failed: ${errCounts.message}`, {
       stage: "query", cause: errCounts.code,
@@ -308,11 +392,77 @@ export async function listStores(): Promise<StoreEntry[]> {
     countMap.set(d.store_id, (countMap.get(d.store_id) || 0) + 1);
   }
 
-  return (stores || []).map((s: any) => ({
-    store_id: s.id,
-    brand: s.brand,
-    name: s.name,
-    address: s.address,
-    discountCount: countMap.get(s.id) || 0,
-  }));
+  // Build store entries from discount store_ids (sorted by count desc)
+  const entries: StoreEntry[] = Array.from(countMap.entries())
+    .sort((a, b) => b[1] - a[1])
+    .map(([storeId, count]) => {
+      const info = getStoreInfo(storeId);
+      return {
+        store_id: storeId,
+        brand: info.brand,
+        name: info.name,
+        address: info.address,
+        discountCount: count,
+      };
+    });
+
+  return entries;
+}
+
+/**
+ * Map a store_id to friendly display info.
+ * Patterns:
+ *   aldi-sued-national → ALDI SÜD (national prospectus)
+ *   rewe-<city>-<n>    → REWE <City>
+ *   aldi-<city>-<n>    → ALDI SÜD <City>
+ */
+function getStoreInfo(storeId: string): { brand: string; name: string; address: string } {
+  if (storeId === "aldi-sued-national") {
+    return {
+      brand: "aldi-sued",
+      name: "ALDI SÜD (national)",
+      address: "Germany-wide — same prospectus everywhere",
+    };
+  }
+
+  const parts = storeId.split("-");
+  if (parts[0] === "rewe") {
+    const city = parts[1] ? capitalize(parts[1]) : "";
+    return {
+      brand: "rewe",
+      name: `REWE ${city}`.trim(),
+      address: "",
+    };
+  }
+
+  if (parts[0] === "aldi") {
+    const city = parts[1] ? capitalize(parts[1]) : "";
+    return {
+      brand: "aldi-sued",
+      name: `ALDI SÜD ${city}`.trim(),
+      address: "",
+    };
+  }
+
+  return {
+    brand: "other",
+    name: storeId,
+    address: "",
+  };
+}
+
+function capitalize(s: string): string {
+  // Handle German umlaut replacements from slugification (nuernberg → Nürnberg)
+  const umlautMap: Record<string, string> = {
+    "ae": "ä", "oe": "ö", "ue": "ü",
+    "Ae": "Ä", "Oe": "Ö", "Ue": "Ü",
+    "ss": "ß",
+  };
+  // Replace common patterns
+  let result = s;
+  for (const [from, to] of Object.entries(umlautMap)) {
+    result = result.replace(new RegExp(from, "g"), to);
+  }
+  // Capitalize first letter
+  return result.charAt(0).toUpperCase() + result.slice(1);
 }
