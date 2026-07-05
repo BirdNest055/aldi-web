@@ -14,6 +14,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
+import { ProductDetail } from "@/components/ProductDetail";
 
 type SortOption = "title-asc" | "title-desc" | "price-asc" | "price-desc" | "discount-pct" | "newest";
 
@@ -221,7 +222,7 @@ export default function Home() {
               <span className="font-mono font-bold text-primary-foreground text-sm">D</span>
             </div>
             <div>
-              <h1 className="text-base font-semibold leading-none">Discount Database <span className="text-xs text-muted-foreground font-normal">v2.3.0</span></h1>
+              <h1 className="text-base font-semibold leading-none">Discount Database <span className="text-xs text-muted-foreground font-normal">v2.4.0</span></h1>
               <p className="text-xs text-muted-foreground mt-0.5">All products across all stores</p>
             </div>
           </div>
@@ -251,7 +252,7 @@ export default function Home() {
               <span className="w-2 h-2 rounded-full" style={{ background: STORE_BRAND_COLORS["rewe"] }} />
               REWE
             </span>
-            <span className="font-mono">v2.3.0</span>
+            <span className="font-mono">v2.4.0</span>
           </div>
         </div>
       </footer>
@@ -396,6 +397,10 @@ function DashboardSkeleton() {
 function ProductsView() {
   // Initialize from URL for deep-linking
   const [filters, setFilters] = useState<Filters>(() => filtersFromUrl());
+
+  // Product detail sheet state
+  const [selectedProductId, setSelectedProductId] = useState<number | null>(null);
+  const [detailOpen, setDetailOpen] = useState(false);
 
   // Sync to URL whenever filters change
   useEffect(() => {
@@ -681,7 +686,14 @@ function ProductsView() {
               const dPct = discountPct(p.price, p.regular_price);
               const savings = savingsEur(p.price, p.regular_price);
               return (
-                <div key={p.id} className="flex items-center gap-4 px-4 py-3 hover:bg-accent/40 transition-colors">
+                <div
+                  key={p.id}
+                  className="flex items-center gap-4 px-4 py-3 hover:bg-accent/40 transition-colors cursor-pointer"
+                  onClick={() => {
+                    setSelectedProductId(p.id);
+                    setDetailOpen(true);
+                  }}
+                >
                   {/* Brand color dot */}
                   <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ background: brandColor }} title={brand} />
                   <div className="flex-1 min-w-0">
@@ -776,6 +788,13 @@ function ProductsView() {
           </div>
         </div>
       )}
+
+      {/* Product detail sheet */}
+      <ProductDetail
+        productId={selectedProductId}
+        open={detailOpen}
+        onOpenChange={setDetailOpen}
+      />
     </div>
   );
 }
