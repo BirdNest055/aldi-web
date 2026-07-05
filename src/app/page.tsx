@@ -227,7 +227,7 @@ export default function Home() {
               <span className="font-mono font-bold text-primary-foreground text-sm">D</span>
             </div>
             <div>
-              <h1 className="text-base font-semibold leading-none">Discount Database <span className="text-xs text-muted-foreground font-normal">v2.8.0</span></h1>
+              <h1 className="text-base font-semibold leading-none">Discount Database <span className="text-xs text-muted-foreground font-normal">v2.9.0</span></h1>
               <p className="text-xs text-muted-foreground mt-0.5">All products across all stores</p>
             </div>
           </div>
@@ -265,7 +265,7 @@ export default function Home() {
               <span className="w-2 h-2 rounded-full" style={{ background: STORE_BRAND_COLORS["rewe"] }} />
               REWE
             </span>
-            <span className="font-mono">v2.8.0</span>
+            <span className="font-mono">v2.9.0</span>
           </div>
         </div>
       </footer>
