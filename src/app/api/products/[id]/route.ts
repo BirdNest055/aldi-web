@@ -115,6 +115,8 @@ async function handler(req: NextRequest, { params }: { params: Promise<{ id: str
       address: storeAddress,
       openingHours: storeOpeningHours,
     },
+    // Debug: return ALL raw fields from Supabase so we can see what columns exist
+    _raw: product,
     // Price history (same product title across stores)
     priceHistory: (history || []).map((h: any) => ({
       id: h.id,
