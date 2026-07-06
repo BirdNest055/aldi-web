@@ -5,7 +5,7 @@ import { useQuery } from "@tanstack/react-query";
 import {
   TrendingUp, Package, Store as StoreIcon, Tag, Search, Filter, ArrowUpDown,
   ChevronLeft, ChevronRight, X, AlertCircle, RefreshCw, MapPin, Percent,
-  Flame, Trophy, Grid3x3, BarChart3,
+  Flame, Trophy, Grid3x3, BarChart3, Scale, Clock3,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -20,6 +20,10 @@ import { HotDealsTab } from "@/components/tabs/HotDealsTab";
 import { LeaderboardTab } from "@/components/tabs/LeaderboardTab";
 import { PriceComparisonTab } from "@/components/tabs/PriceComparisonTab";
 import { AnalysisTab } from "@/components/tabs/AnalysisTab";
+import {
+  storeDisplayName, storeBrand as storeBrandFromId, fallbackAddress,
+  type Quantity,
+} from "@/lib/product-info";
 
 type SortOption = "title-asc" | "title-desc" | "price-asc" | "price-desc" | "discount-pct" | "newest";
 
@@ -32,7 +36,7 @@ interface Stats {
   priceMin: number | null;
   priceMax: number | null;
   priceAvg: number | null;
-  storeList: Array<{ store_id: string; count: number; min_price: number | null; max_price: number | null; address: string | null; }>;
+  storeList: Array<{ store_id: string; count: number; min_price: number | null; max_price: number | null; address: string | null; opening_hours: string | null; }>;
 }
 
 interface ProductListItem {
@@ -45,6 +49,7 @@ interface ProductListItem {
   currency: string;
   category: string | null;
   fetched_at: string;
+  quantity: Quantity | null;
 }
 
 interface ProductListResult {
@@ -56,7 +61,7 @@ interface ProductListResult {
 
 interface BrandEntry { name: string; count: number; avgPrice: number | null; }
 interface CategoryEntry { name: string; count: number; }
-interface StoreEntry { store_id: string; brand: string; name: string; address: string; discountCount: number; }
+interface StoreEntry { store_id: string; brand: string; name: string; address: string; openingHours: string; discountCount: number; }
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Helpers
@@ -86,25 +91,14 @@ function savingsEur(price: number | null, regular: number | null): number | null
   return regular - price;
 }
 
-/** Map a store_id to friendly display name. */
+/** Map a store_id to friendly display name. (Delegates to shared util — single source of truth.) */
 function friendlyStoreName(storeId: string): string {
-  if (storeId === "aldi-sued-national") return "ALDI SÜD";
-  const parts = storeId.split("-");
-  if (parts[0] === "rewe") {
-    return `REWE ${capitalizeCity(parts[1] || "")}`.trim();
-  }
-  if (parts[0] === "aldi") {
-    return `ALDI SÜD ${capitalizeCity(parts[1] || "")}`.trim();
-  }
-  return storeId;
+  return storeDisplayName(storeId);
 }
 
-/** Get brand key from store_id. */
+/** Get brand key from store_id. (Delegates to shared util.) */
 function brandFromStoreId(storeId: string): string {
-  if (storeId === "aldi-sued-national") return "aldi-sued";
-  if (storeId.startsWith("aldi")) return "aldi-sued";
-  if (storeId.startsWith("rewe")) return "rewe";
-  return "other";
+  return storeBrandFromId(storeId);
 }
 
 /** Capitalize + handle German umlaut replacements from slugification. */
@@ -227,7 +221,7 @@ export default function Home() {
               <span className="font-mono font-bold text-primary-foreground text-sm">D</span>
             </div>
             <div>
-              <h1 className="text-base font-semibold leading-none">Discount Database <span className="text-xs text-muted-foreground font-normal">v2.9.0</span></h1>
+              <h1 className="text-base font-semibold leading-none">Discount Database <span className="text-xs text-muted-foreground font-normal">v2.10.0</span></h1>
               <p className="text-xs text-muted-foreground mt-0.5">All products across all stores</p>
             </div>
           </div>
@@ -265,7 +259,7 @@ export default function Home() {
               <span className="w-2 h-2 rounded-full" style={{ background: STORE_BRAND_COLORS["rewe"] }} />
               REWE
             </span>
-            <span className="font-mono">v2.9.0</span>
+            <span className="font-mono">v2.10.0</span>
           </div>
         </div>
       </footer>
@@ -342,13 +336,23 @@ function Dashboard() {
             {stats.storeList.map((s) => {
               const brand = brandFromStoreId(s.store_id);
               const color = STORE_BRAND_COLORS[brand] || "#888";
+              const displayAddress = s.address || fallbackAddress(s.store_id) || "Address not on file";
               return (
                 <div key={s.store_id} className="flex items-center justify-between px-6 py-3 hover:bg-accent/40 transition-colors">
-                  <div className="flex items-center gap-3 min-w-0">
+                  <div className="flex items-center gap-3 min-w-0 flex-1">
                     <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ background: color }} title={brand} />
-                    <div className="min-w-0">
+                    <div className="min-w-0 flex-1">
                       <div className="text-sm font-medium truncate">{friendlyStoreName(s.store_id)}</div>
-                      <div className="text-xs text-muted-foreground truncate">{s.address || s.store_id}</div>
+                      <div className="flex items-center gap-1.5 text-xs text-muted-foreground truncate">
+                        <MapPin className="w-3 h-3 shrink-0" />
+                        <span className="truncate">{displayAddress}</span>
+                      </div>
+                      {s.opening_hours && (
+                        <div className="flex items-center gap-1.5 text-xs text-muted-foreground truncate mt-0.5">
+                          <Clock3 className="w-3 h-3 shrink-0" />
+                          <span className="font-mono truncate">{s.opening_hours}</span>
+                        </div>
+                      )}
                     </div>
                   </div>
                   <div className="flex items-center gap-4 text-sm shrink-0">
@@ -698,6 +702,8 @@ function ProductsView() {
               const brandColor = STORE_BRAND_COLORS[brand] || "#888";
               const dPct = discountPct(p.price, p.regular_price);
               const savings = savingsEur(p.price, p.regular_price);
+              const storeInfo = storesWithDiscounts.find((s) => s.store_id === p.store_id);
+              const storeAddress = storeInfo?.address || fallbackAddress(p.store_id) || "Address not on file";
               return (
                 <div
                   key={p.id}
@@ -712,6 +718,11 @@ function ProductsView() {
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2 flex-wrap">
                       <span className="font-medium truncate">{p.product_title}</span>
+                      {p.quantity && (
+                        <Badge variant="outline" className="text-xs shrink-0 gap-0.5 font-mono">
+                          <Scale className="w-2.5 h-2.5" /> {p.quantity.display}
+                        </Badge>
+                      )}
                       {p.brand && (
                         <Badge className="text-xs shrink-0 bg-primary/15 text-primary border-primary/30">{p.brand}</Badge>
                       )}
@@ -724,12 +735,14 @@ function ProductsView() {
                         </Badge>
                       )}
                     </div>
-                    <div className="flex items-center gap-3 mt-1 text-xs text-muted-foreground">
+                    <div className="flex items-center gap-2 mt-1 text-xs text-muted-foreground flex-wrap">
                       <span style={{ color: brandColor }} className="font-medium">{friendlyStoreName(p.store_id)}</span>
-                      {storesWithDiscounts.find((s) => s.store_id === p.store_id)?.address && (
-                        <span className="text-xs text-muted-foreground hidden md:inline">· {storesWithDiscounts.find((s) => s.store_id === p.store_id)?.address}</span>
-                      )}
-                      <span className="hidden sm:inline">·</span>
+                      <span className="text-muted-foreground/40">·</span>
+                      <span className="inline-flex items-center gap-0.5 text-muted-foreground truncate max-w-[280px]">
+                        <MapPin className="w-3 h-3 shrink-0" />
+                        <span className="truncate">{storeAddress}</span>
+                      </span>
+                      <span className="hidden sm:inline text-muted-foreground/40">·</span>
                       <span className="hidden sm:inline">{fmtDate(p.fetched_at)}</span>
                     </div>
                   </div>

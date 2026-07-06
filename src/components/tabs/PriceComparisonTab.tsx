@@ -2,13 +2,9 @@
 import { useQuery } from "@tanstack/react-query";
 import { Grid3x3, Loader2 } from "lucide-react";
 import { Skeleton } from "@/components/ui/skeleton";
+import { storeDisplayName, storeBrand } from "@/lib/product-info";
 
 const STORE_COLORS: Record<string, string> = { "aldi-sued": "#1a7a3a", "rewe": "#e30613" };
-function brand(id: string) { return id.startsWith("aldi") ? "aldi-sued" : id.startsWith("rewe") ? "rewe" : "other"; }
-function storeName(id: string) {
-  if (id === "aldi-sued-national") return "ALDI SÜD";
-  const p = id.split("-"); return p[0] === "rewe" ? `REWE ${p.slice(2).join(" ")||p[1]||""}`.trim() : p[0] === "aldi" ? `ALDI` : id;
-}
 
 export function PriceComparisonTab() {
   const { data: products, isLoading } = useQuery({
@@ -47,8 +43,8 @@ export function PriceComparisonTab() {
                 {stores.map(sid => (
                   <th key={sid} className="px-3 py-2 text-center min-w-[80px]">
                     <div className="flex flex-col items-center gap-1">
-                      <span className="w-2 h-2 rounded-full" style={{ background: STORE_COLORS[brand(sid)] || "#888" }} />
-                      {storeName(sid).substring(0, 15)}
+                      <span className="w-2 h-2 rounded-full" style={{ background: STORE_COLORS[storeBrand(sid)] || "#888" }} />
+                      {storeDisplayName(sid).substring(0, 15)}
                     </div>
                   </th>
                 ))}

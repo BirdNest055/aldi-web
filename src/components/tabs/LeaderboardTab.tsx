@@ -1,15 +1,11 @@
 "use client";
 import { useQuery } from "@tanstack/react-query";
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell, CartesianAxis } from "recharts";
-import { Trophy, Loader2 } from "lucide-react";
+import { Trophy, Loader2, MapPin, Clock3 } from "lucide-react";
 import { Skeleton } from "@/components/ui/skeleton";
+import { storeDisplayName, storeBrand, fallbackAddress } from "@/lib/product-info";
 
 const STORE_COLORS: Record<string, string> = { "aldi-sued": "#1a7a3a", "rewe": "#e30613" };
-function brand(id: string) { return id.startsWith("aldi") ? "aldi-sued" : id.startsWith("rewe") ? "rewe" : "other"; }
-function storeName(id: string) {
-  if (id === "aldi-sued-national") return "ALDI SÜD";
-  const p = id.split("-"); return p[0] === "rewe" ? `REWE ${p.slice(2).join(" ")||p[1]||""}`.trim() : p[0] === "aldi" ? `ALDI` : id;
-}
 
 export function LeaderboardTab() {
   const { data: stores, isLoading } = useQuery({
@@ -18,9 +14,9 @@ export function LeaderboardTab() {
   });
 
   const chartData = (stores || []).slice(0, 15).map((s: any) => ({
-    name: storeName(s.store_id).substring(0, 20),
+    name: (s.name || storeDisplayName(s.store_id)).substring(0, 20),
     avgPrice: s.avg_price ? Number(s.avg_price.toFixed(2)) : 0,
-    brand: brand(s.store_id),
+    brand: s.brand || storeBrand(s.store_id),
     onSalePct: Number(s.on_sale_pct.toFixed(1)),
     avgDiscount: Number(s.avg_discount_pct.toFixed(1)),
     productCount: s.product_count,
@@ -94,13 +90,15 @@ export function LeaderboardTab() {
         </div>
       </div>
 
-      {/* Table */}
-      <div className="bg-card border rounded-lg overflow-hidden">
+      {/* Table — now includes Address and Opening Hours columns */}
+      <div className="bg-card border rounded-lg overflow-hidden overflow-x-auto">
         <table className="w-full text-sm">
           <thead className="bg-muted/50 text-muted-foreground text-xs uppercase">
             <tr>
               <th className="px-4 py-2 text-left">#</th>
               <th className="px-4 py-2 text-left">Store</th>
+              <th className="px-4 py-2 text-left">Address</th>
+              <th className="px-4 py-2 text-left">Opening Hours</th>
               <th className="px-4 py-2 text-right">Products</th>
               <th className="px-4 py-2 text-right">Avg Price</th>
               <th className="px-4 py-2 text-right">On Sale %</th>
@@ -108,21 +106,38 @@ export function LeaderboardTab() {
             </tr>
           </thead>
           <tbody>
-            {(stores || []).slice(0, 20).map((s: any, i: number) => (
-              <tr key={s.store_id} className="border-t border-border hover:bg-muted/30">
-                <td className="px-4 py-2 text-muted-foreground">{i + 1}</td>
-                <td className="px-4 py-2">
-                  <span className="inline-flex items-center gap-2">
-                    <span className="w-2 h-2 rounded-full" style={{ background: STORE_COLORS[brand(s.store_id)] || "#888" }} />
-                    {storeName(s.store_id)}
-                  </span>
-                </td>
-                <td className="px-4 py-2 text-right font-mono">{s.product_count}</td>
-                <td className="px-4 py-2 text-right font-mono">{s.avg_price ? `${s.avg_price.toFixed(2)} €` : "—"}</td>
-                <td className="px-4 py-2 text-right font-mono">{s.on_sale_pct.toFixed(1)}%</td>
-                <td className="px-4 py-2 text-right font-mono text-amber-500">{s.avg_discount_pct.toFixed(1)}%</td>
-              </tr>
-            ))}
+            {(stores || []).slice(0, 20).map((s: any, i: number) => {
+              const b = s.brand || storeBrand(s.store_id);
+              const displayAddress = s.address || fallbackAddress(s.store_id) || "—";
+              const displayHours = s.opening_hours || "—";
+              return (
+                <tr key={s.store_id} className="border-t border-border hover:bg-muted/30">
+                  <td className="px-4 py-2 text-muted-foreground">{i + 1}</td>
+                  <td className="px-4 py-2">
+                    <span className="inline-flex items-center gap-2">
+                      <span className="w-2 h-2 rounded-full" style={{ background: STORE_COLORS[b] || "#888" }} />
+                      {s.name || storeDisplayName(s.store_id)}
+                    </span>
+                  </td>
+                  <td className="px-4 py-2 text-xs text-muted-foreground max-w-[260px]">
+                    <span className="inline-flex items-start gap-1">
+                      <MapPin className="w-3 h-3 shrink-0 mt-0.5" />
+                      <span className="truncate" title={displayAddress}>{displayAddress}</span>
+                    </span>
+                  </td>
+                  <td className="px-4 py-2 text-xs text-muted-foreground font-mono max-w-[180px]">
+                    <span className="inline-flex items-start gap-1">
+                      <Clock3 className="w-3 h-3 shrink-0 mt-0.5" />
+                      <span className="truncate" title={displayHours}>{displayHours}</span>
+                    </span>
+                  </td>
+                  <td className="px-4 py-2 text-right font-mono">{s.product_count}</td>
+                  <td className="px-4 py-2 text-right font-mono">{s.avg_price ? `${s.avg_price.toFixed(2)} €` : "—"}</td>
+                  <td className="px-4 py-2 text-right font-mono">{s.on_sale_pct.toFixed(1)}%</td>
+                  <td className="px-4 py-2 text-right font-mono text-amber-500">{s.avg_discount_pct.toFixed(1)}%</td>
+                </tr>
+              );
+            })}
           </tbody>
         </table>
       </div>

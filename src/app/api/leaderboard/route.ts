@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { getDb } from "@/lib/db";
 import { withErrorHandling } from "@/lib/errors";
+import { storeDisplayName, storeBrand, fallbackAddress } from "@/lib/product-info";
 
 async function handler() {
   const db = getDb();
@@ -33,11 +34,39 @@ async function handler() {
     }
   }
 
+  // Fetch addresses + opening hours + names for all stores that have discounts
+  const storeIds = Array.from(storeMap.keys());
+  const dbInfoLookup = new Map<string, { name: string; address: string; opening_hours: string }>();
+  if (storeIds.length > 0) {
+    try {
+      const { data: storeRows } = await db
+        .from("stores")
+        .select("id, name, address, opening_hours")
+        .in("id", storeIds)
+        .limit(5000);
+      if (storeRows) {
+        for (const s of storeRows) {
+          dbInfoLookup.set(s.id, {
+            name: s.name || "",
+            address: s.address || "",
+            opening_hours: s.opening_hours || "",
+          });
+        }
+      }
+    } catch {}
+  }
+
   const result = Array.from(storeMap.entries()).map(([storeId, s]) => {
-    const brand = storeId.startsWith("aldi") ? "aldi-sued" : storeId.startsWith("rewe") ? "rewe" : "other";
+    const dbInfo = dbInfoLookup.get(storeId);
+    const displayName = dbInfo?.name || storeDisplayName(storeId);
+    const address = dbInfo?.address || fallbackAddress(storeId) || "";
+    const openingHours = dbInfo?.opening_hours || "";
     return {
       store_id: storeId,
-      brand,
+      brand: storeBrand(storeId),
+      name: displayName,
+      address,
+      opening_hours: openingHours,
       product_count: s.count,
       avg_price: s.priceCount > 0 ? s.totalPrice / s.priceCount : null,
       on_sale_count: s.onSale,

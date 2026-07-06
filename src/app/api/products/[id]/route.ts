@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getDb } from "@/lib/db";
 import { withErrorHandling, Errors } from "@/lib/errors";
+import { extractQuantity } from "@/lib/product-info";
 
 /**
  * GET /api/products/<id>
@@ -80,11 +81,13 @@ async function handler(req: NextRequest, { params }: { params: Promise<{ id: str
     : storeId.startsWith("rewe") ? "rewe" : "other";
   const storeName = friendlyStoreName(storeId);
 
-  // Fetch store address from stores table
+  // Fetch store address + opening hours from stores table
   let storeAddress: string | null = null;
+  let storeOpeningHours: string | null = null;
   try {
-    const { data: storeRow } = await db.from("stores").select("address").eq("id", storeId).maybeSingle();
+    const { data: storeRow } = await db.from("stores").select("address, opening_hours").eq("id", storeId).maybeSingle();
     storeAddress = storeRow?.address || null;
+    storeOpeningHours = storeRow?.opening_hours || null;
   } catch {}
 
   return NextResponse.json({
@@ -98,6 +101,8 @@ async function handler(req: NextRequest, { params }: { params: Promise<{ id: str
     validFrom: product.valid_from,
     validUntil: product.valid_until,
     fetchedAt: product.fetched_at,
+    // Extracted quantity / weight / volume from the title
+    quantity: extractQuantity(product.product_title),
     // Computed
     isOnSale,
     discountPct,
@@ -108,6 +113,7 @@ async function handler(req: NextRequest, { params }: { params: Promise<{ id: str
       name: storeName,
       brand: storeBrand,
       address: storeAddress,
+      openingHours: storeOpeningHours,
     },
     // Price history (same product title across stores)
     priceHistory: (history || []).map((h: any) => ({

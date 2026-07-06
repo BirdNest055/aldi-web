@@ -6,7 +6,8 @@ import {
 } from "@/components/ui/sheet";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
-import { AlertCircle, Percent, TrendingUp, MapPin, Clock, Tag, Package } from "lucide-react";
+import { AlertCircle, Percent, TrendingUp, MapPin, Clock, Tag, Package, Scale, Clock3 } from "lucide-react";
+import { fallbackAddress, type Quantity } from "@/lib/product-info";
 
 interface ProductDetail {
   id: number;
@@ -19,6 +20,7 @@ interface ProductDetail {
   validFrom: string | null;
   validUntil: string | null;
   fetchedAt: string;
+  quantity: Quantity | null;
   isOnSale: boolean;
   discountPct: number | null;
   savingsAmount: number | null;
@@ -26,6 +28,8 @@ interface ProductDetail {
     id: string;
     name: string;
     brand: string;
+    address: string | null;
+    openingHours: string | null;
   };
   priceHistory: Array<{
     id: number;
@@ -154,6 +158,11 @@ export function ProductDetail({
               <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide">Product Info</h3>
               <InfoRow icon={Tag} label="Brand" value={product.brand || "—"} />
               <InfoRow icon={Package} label="Category" value={product.category || "—"} />
+              <InfoRow
+                icon={Scale}
+                label="Size"
+                value={product.quantity ? product.quantity.display : "—"}
+              />
               {product.validFrom && (
                 <InfoRow icon={Clock} label="Valid from" value={product.validFrom} />
               )}
@@ -163,24 +172,37 @@ export function ProductDetail({
               <InfoRow icon={Clock} label="Fetched" value={fmtDateTime(product.fetchedAt)} />
             </div>
 
-            {/* Store info */}
+            {/* Store info — always shows address (with friendly fallback) + opening hours if available */}
             <div className="space-y-3">
               <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide">Store</h3>
-              <div className="flex items-center gap-3 p-3 rounded-md bg-muted/50 border">
-                <span
-                  className="w-3 h-3 rounded-full shrink-0"
-                  style={{ background: STORE_BRAND_COLORS[product.store.brand] || "#888" }}
-                />
-                <div className="flex-1 min-w-0">
-                  <div className="text-sm font-medium">{product.store.name}</div>
-                  {(product.store as any).address && (
-                    <div className="text-xs text-muted-foreground">{(product.store as any).address}</div>
-                  )}
-                  <div className="text-xs text-muted-foreground font-mono">{product.store.id}</div>
+              <div className="p-3 rounded-md bg-muted/50 border space-y-2">
+                <div className="flex items-center gap-3">
+                  <span
+                    className="w-3 h-3 rounded-full shrink-0"
+                    style={{ background: STORE_BRAND_COLORS[product.store.brand] || "#888" }}
+                  />
+                  <div className="flex-1 min-w-0">
+                    <div className="text-sm font-medium">{product.store.name}</div>
+                    <div className="text-xs text-muted-foreground font-mono">{product.store.id}</div>
+                  </div>
+                  <Badge variant="outline" className="text-xs">
+                    {product.store.brand === "aldi-sued" ? "ALDI SÜD" : product.store.brand.toUpperCase()}
+                  </Badge>
                 </div>
-                <Badge variant="outline" className="text-xs">
-                  {product.store.brand === "aldi-sued" ? "ALDI SÜD" : product.store.brand.toUpperCase()}
-                </Badge>
+                {/* Address — always shown. Use DB value, fall back to friendly text for ALDI national. */}
+                <div className="flex items-start gap-2 pl-6 text-xs">
+                  <MapPin className="w-3.5 h-3.5 text-muted-foreground shrink-0 mt-0.5" />
+                  <span className="text-foreground/80">
+                    {product.store.address || fallbackAddress(product.store.id) || "Address not on file"}
+                  </span>
+                </div>
+                {/* Opening hours — only if available */}
+                {product.store.openingHours && (
+                  <div className="flex items-start gap-2 pl-6 text-xs">
+                    <Clock3 className="w-3.5 h-3.5 text-muted-foreground shrink-0 mt-0.5" />
+                    <span className="text-foreground/80 font-mono">{product.store.openingHours}</span>
+                  </div>
+                )}
               </div>
             </div>
 

@@ -1,5 +1,6 @@
 import { getDb } from "@/lib/db";
 import { Errors, ApiError } from "@/lib/errors";
+import { extractQuantity, type Quantity } from "@/lib/product-info";
 
 export interface Stats {
   totalDiscounts: number;
@@ -16,6 +17,7 @@ export interface Stats {
     min_price: number | null;
     max_price: number | null;
     address: string | null;
+    opening_hours: string | null;
   }>;
 }
 
@@ -29,6 +31,8 @@ export interface ProductListItem {
   currency: string;
   category: string | null;
   fetched_at: string;
+  /** Quantity / weight / volume extracted from the product title, if any. */
+  quantity: Quantity | null;
 }
 
 export interface ProductListResult {
@@ -56,6 +60,8 @@ export interface StoreEntry {
   brand: string;
   name: string;
   address: string;
+  /** Opening hours, e.g. "Mo-Sa 08:00-20:00" — may be empty. */
+  openingHours: string;
   discountCount: number;
 }
 
@@ -110,14 +116,16 @@ export async function getStats(): Promise<Stats> {
     }
   }
 
-  // Fetch addresses from stores table
+  // Fetch addresses + opening hours from stores table
   const storeIds = Array.from(storeMap.keys());
   let addressLookup = new Map<string, string>();
+  let openingHoursLookup = new Map<string, string>();
   try {
-    const { data: storeRows } = await db.from("stores").select("id, address").in("id", storeIds).limit(500);
+    const { data: storeRows } = await db.from("stores").select("id, address, opening_hours").in("id", storeIds).limit(500);
     if (storeRows) {
       for (const s of storeRows) {
         if (s.address) addressLookup.set(s.id, s.address);
+        if (s.opening_hours) openingHoursLookup.set(s.id, s.opening_hours);
       }
     }
   } catch {}
@@ -137,6 +145,7 @@ export async function getStats(): Promise<Stats> {
       min_price: v.min === Infinity ? null : v.min,
       max_price: v.max === -Infinity ? null : v.max,
       address: addressLookup.get(store_id) || null,
+      opening_hours: openingHoursLookup.get(store_id) || null,
     })),
   };
 }
@@ -234,6 +243,7 @@ export async function listProducts(
       currency: d.currency || "EUR",
       category: d.category,
       fetched_at: d.fetched_at,
+      quantity: extractQuantity(d.product_title),
     })),
     total: count || 0,
     page,
@@ -300,6 +310,7 @@ async function listProductsByDiscountPct(
     currency: d.currency || "EUR",
     category: d.category,
     fetched_at: d.fetched_at,
+    quantity: extractQuantity(d.product_title),
     _discountPct: d.price && d.regular_price
       ? (1 - d.price / d.regular_price) * 100
       : 0,
@@ -438,22 +449,23 @@ export async function listStores(): Promise<StoreEntry[]> {
     countMap.set(d.store_id, (countMap.get(d.store_id) || 0) + 1);
   }
 
-  // Fetch addresses from the stores table for all store_ids that have discounts
+  // Fetch addresses + opening hours from the stores table for all store_ids that have discounts
   const storeIds = Array.from(countMap.keys());
   const { data: storeRows, error: storeErr } = await db
     .from("stores")
-    .select("id, name, brand, address, offers_url")
+    .select("id, name, brand, address, opening_hours, offers_url")
     .in("id", storeIds)
     .limit(5000);
 
-  // Build a lookup: store_id → { name, brand, address }
-  const storeLookup = new Map<string, { name: string; brand: string; address: string }>();
+  // Build a lookup: store_id → { name, brand, address, opening_hours }
+  const storeLookup = new Map<string, { name: string; brand: string; address: string; opening_hours: string }>();
   if (!storeErr && storeRows) {
     for (const s of storeRows) {
       storeLookup.set(s.id, {
         name: s.name,
         brand: s.brand,
         address: s.address || "",
+        opening_hours: s.opening_hours || "",
       });
     }
   }
@@ -469,6 +481,7 @@ export async function listStores(): Promise<StoreEntry[]> {
         brand: dbInfo?.brand || info.brand,
         name: dbInfo?.name || info.name,
         address: dbInfo?.address || info.address,
+        openingHours: dbInfo?.opening_hours || "",
         discountCount: count,
       };
     });
